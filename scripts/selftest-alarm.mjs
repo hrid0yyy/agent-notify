@@ -5,13 +5,17 @@
  * alarms are produced.
  */
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import WebSocket from "ws";
 import { readConfig } from "../lib/config.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = 8788;
 const BASE = `http://127.0.0.1:${PORT}`;
+const STATE_PATH = path.join(os.tmpdir(), `agent-notify-selftest-${process.pid}.json`);
 const config = readConfig();
 const headers = {
   "content-type": "application/json",
@@ -30,6 +34,7 @@ const child = spawn(process.execPath, [path.join(ROOT, "bridge", "server.mjs")],
     ...process.env,
     PORT: String(PORT),
     HOST: "127.0.0.1",
+    AGENT_NOTIFY_STATE: STATE_PATH,
     AGENT_NOTIFY_LEASE_SECONDS: "5",
     AGENT_NOTIFY_COOLDOWN_SECONDS: "0",
     AGENT_NOTIFY_MAX_PER_HOUR: "2",
@@ -82,9 +87,23 @@ async function cancel(askId) {
   });
 }
 
+let ws = null;
 try {
   await waitForBridge();
   assert(true, "test bridge started");
+
+  ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, {
+    headers: { Authorization: `Bearer ${config.token}` },
+  });
+  await new Promise((resolve, reject) => {
+    ws.once("open", resolve);
+    ws.once("error", reject);
+  });
+  await fetch(`${BASE}/alarm`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ mode: "on" }),
+  });
 
   const normal = await startAsk({
     agent: "claude-code",
@@ -192,5 +211,11 @@ try {
 
   console.log("\nsingleton alarm self-test passed");
 } finally {
+  ws?.close();
   child.kill();
+  try {
+    fs.rmSync(STATE_PATH, { force: true });
+  } catch {
+    // ignore cleanup
+  }
 }

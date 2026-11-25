@@ -27,7 +27,8 @@ async function post(route, body, timeoutMs = 10_000) {
 const project = "agent-notify";
 
 if (wantAlarm) {
-  console.log("Sending an urgent ask; the phone should ring after 10 seconds…");
+  console.log("Turning alarms on for 5 minutes and sending an urgent ask…");
+  await post("/alarm", { mode: "timed", minutes: 5 });
   const result = await post(
     "/ask",
     {

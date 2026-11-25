@@ -3,10 +3,12 @@
 $ErrorActionPreference = "Stop"
 
 $Startup = [Environment]::GetFolderPath("Startup")
-$Vbs = Join-Path $Startup "AgentNotifyBridge.vbs"
-if (Test-Path $Vbs) {
-    Remove-Item -Force $Vbs
-    Write-Output "Removed $Vbs"
+foreach ($name in @("AgentNotifyBridge.vbs", "AgentNotifyTray.vbs")) {
+    $vbs = Join-Path $Startup $name
+    if (Test-Path $vbs) {
+        Remove-Item -Force $vbs
+        Write-Output "Removed $vbs"
+    }
 }
 
 $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
@@ -14,6 +16,13 @@ $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
 foreach ($proc in $procs) {
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
     Write-Output "Stopped bridge process $($proc.ProcessId)"
+}
+
+$trayProcs = Get-CimInstance Win32_Process |
+    Where-Object { $_.CommandLine -like "*AgentNotifyTray.ps1*" }
+foreach ($proc in $trayProcs) {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    Write-Output "Stopped tray process $($proc.ProcessId)"
 }
 
 $Installed = Join-Path $env:LOCALAPPDATA "AgentNotify"

@@ -31,7 +31,7 @@ object Notifications {
             .ifBlank { "Agent" }
     }
 
-    private fun agentColor(agent: String): Int = when (agent) {
+    fun agentColor(agent: String): Int = when (agent) {
         "claude-code" -> 0xFFD97757.toInt()
         "opencode" -> 0xFF7CE38B.toInt()
         "mcp" -> 0xFF8AB4F8.toInt()
@@ -271,6 +271,7 @@ object Notifications {
                 askId = null,
                 options = emptyList(),
                 allowText = false,
+                createdAt = System.currentTimeMillis(),
             ),
         )
     }

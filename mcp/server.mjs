@@ -48,7 +48,13 @@ async function post(path, body, timeoutMs = TIMEOUT_MS) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || `bridge returned HTTP ${response.status}`);
+    const error = new Error(
+      data.error || `bridge returned HTTP ${response.status}`,
+    );
+    error.code = data.error;
+    error.status = response.status;
+    error.kind = data.kind;
+    throw error;
   }
   const headerAlarm = response.headers.get("x-alarm-status");
   return {
@@ -68,6 +74,9 @@ async function post(path, body, timeoutMs = TIMEOUT_MS) {
 }
 
 function alarmNote(result) {
+  if (result.alarmAllowed === false) {
+    return " The alarm was not armed because alarms are off.";
+  }
   const alarm = result.alarm || result._alarm;
   if (!alarm || alarm.status === "granted" || alarm.status === "normal") return "";
   const holder = alarm.holder
@@ -89,7 +98,7 @@ server.registerTool(
   {
     title: "Notify the user's phone",
     description:
-      "Send a short push notification to the user's phone. Use for a finished task or a non-blocking heads-up. Do not use it for every small step.",
+      "Send a short push notification to the user's phone. Only use this when the user explicitly asks you to notify them. Never call it autonomously, and never use it for every small step.",
     inputSchema: {
       message: z.string().min(1).max(1000).describe("What the user should see."),
       title: z.string().max(120).optional().describe("Notification title."),
@@ -105,20 +114,28 @@ server.registerTool(
     },
   },
   async ({ message, title, kind, project }) => {
-    const result = await post("/event", {
-      agent: detectAgent(),
-      kind: kind || "info",
-      title: title || (kind === "done" ? "Task complete" : "Agent update"),
-      body: message,
-      project: projectName(project),
-    });
+    let result;
+    try {
+      result = await post("/event", {
+        agent: detectAgent(),
+        source: "agent",
+        kind: kind || "info",
+        title: title || (kind === "done" ? "Task complete" : "Agent update"),
+        body: message,
+        project: projectName(project),
+      });
+    } catch (error) {
+      throw error;
+    }
     return {
       content: [
         {
           type: "text",
-          text: result.deduped
-            ? "Notification suppressed as a duplicate."
-            : "Notification sent to the user's phone.",
+          text: result.suppressed
+            ? "Notification suppressed because the user is at their desk."
+            : result.deduped
+              ? "Notification suppressed as a duplicate."
+              : "Notification sent to the user's phone.",
         },
       ],
     };
@@ -130,7 +147,7 @@ server.registerTool(
   {
     title: "Ask the user and wait for an answer",
     description:
-      "Send a question to the user's phone and block until they tap a button or reply. Use this when you are genuinely blocked and need a decision. If the answer times out, do not assume approval.",
+      "Send a question to the user's phone and block until they tap a button or reply. Only use this when the user explicitly asks to be contacted, or after asking them in the conversation and they agree. Never use it autonomously. If the answer times out, do not assume approval.",
     inputSchema: {
       question: z.string().min(1).max(1000).describe("The question to ask."),
       title: z.string().max(120).optional().describe("Notification title."),
@@ -154,7 +171,9 @@ server.registerTool(
       urgent: z
         .boolean()
         .optional()
-        .describe("Escalate to a ringing alarm if the user does not answer."),
+        .describe(
+          "Escalate to a ringing alarm if the user does not answer. Only enable when the user explicitly asks to be called or alarmed.",
+        ),
       escalate_after_seconds: z
         .number()
         .int()
@@ -189,6 +208,7 @@ server.registerTool(
         "/ask",
         {
           agent: detectAgent(),
+          source: "agent",
           title: title || "Agent needs a decision",
           body: question,
           options: buttons,
@@ -209,6 +229,27 @@ server.registerTool(
           {
             type: "text",
             text: `Could not reach the phone bridge at ${BASE}: ${error.message}`,
+          },
+        ],
+      };
+    }
+
+    if (result.status === "desk") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "The user is at their machine. Ask the question in the conversation instead; do not assume approval.",
+          },
+        ],
+      };
+    }
+    if (result.status === "unavailable") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "No phone is connected. Ask the question in the conversation instead; do not assume approval.",
           },
         ],
       };

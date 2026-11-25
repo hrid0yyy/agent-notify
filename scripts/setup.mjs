@@ -126,6 +126,75 @@ Loop
 `;
   fs.writeFileSync(vbsPath, vbs, "ascii");
   console.log(`Startup supervisor: ${vbsPath}`);
+
+  const trayScript = path.join(APP_ROOT, "tray", "AgentNotifyTray.ps1");
+  if (fs.existsSync(trayScript)) {
+    const trayVbsPath = path.join(startup, "AgentNotifyTray.vbs");
+    const trayVbs = `' Agent Notify tray (generated)
+Set sh = CreateObject("WScript.Shell")
+sh.CurrentDirectory = "${root}"
+sh.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""tray\\AgentNotifyTray.ps1""", 0, False
+`;
+    fs.writeFileSync(trayVbsPath, trayVbs, "ascii");
+    console.log(`Tray supervisor: ${trayVbsPath}`);
+  }
+}
+
+function stopTray() {
+  if (process.platform !== "win32") return;
+  try {
+    execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        `Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*AgentNotifyTray.ps1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+      ],
+      { stdio: "ignore" },
+    );
+  } catch {
+    // Best effort.
+  }
+}
+
+function startTray() {
+  if (process.platform !== "win32") return;
+  stopTray();
+  const startup = path.join(
+    process.env.APPDATA ||
+      path.join(os.homedir(), "AppData", "Roaming"),
+    "Microsoft",
+    "Windows",
+    "Start Menu",
+    "Programs",
+    "Startup",
+  );
+  const trayVbs = path.join(startup, "AgentNotifyTray.vbs");
+  if (fs.existsSync(trayVbs)) {
+    spawn("wscript.exe", [trayVbs], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+    console.log("Tray started.");
+    return;
+  }
+  const trayScript = path.join(APP_ROOT, "tray", "AgentNotifyTray.ps1");
+  if (!fs.existsSync(trayScript)) return;
+  spawn(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-WindowStyle",
+      "Hidden",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      trayScript,
+    ],
+    { detached: true, stdio: "ignore", windowsHide: true },
+  ).unref();
+  console.log("Tray started.");
 }
 
 async function isHealthy() {
@@ -391,6 +460,7 @@ if (releaseMode && process.platform === "win32") {
         "lib",
         "opencode",
         "scripts",
+        "tray",
       ]) {
         const source = path.join(ROOT, item);
         if (fs.existsSync(source)) {
@@ -523,6 +593,7 @@ if (has("--serve")) {
 if (releaseMode) {
   installAutostart();
   const healthy = await ensureBridge();
+  startTray();
   const apk = findApk();
   let phoneConfigured = false;
   if (apk) {

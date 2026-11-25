@@ -7,6 +7,9 @@
  * meant to be published on the tailnet with `tailscale serve`.
  */
 import http from "node:http";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { readConfig } from "../lib/config.mjs";
@@ -50,12 +53,74 @@ const ESCALATION = {
   },
 };
 
+const STATE_PATH =
+  process.env.AGENT_NOTIFY_STATE ||
+  path.join(os.homedir(), ".agent-notify", "state.json");
+const DEFAULT_STATE = {
+  presence: "away",
+  alarmMode: "off",
+  alarmsUntil: 0,
+};
+const state = loadState();
+
 const events = [];
 const pending = new Map(); // askId -> pending ask with escalation state
 const recent = new Map(); // dedupe key -> timestamp
 let activeAlarm = null; // the single global alarm lease
 let lastLeaseEndedAt = 0;
 const budgets = new Map(); // "agent|project" -> { grants, lastGrantAt, penaltyUntil }
+
+function loadState() {
+  try {
+    const value = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
+    const presence = value.presence === "desk" ? "desk" : "away";
+    let alarmMode = ["off", "on", "timed"].includes(value.alarmMode)
+      ? value.alarmMode
+      : "off";
+    let alarmsUntil = Number(value.alarmsUntil || 0);
+    if (!value.alarmMode && Number(value.alarmsConsentUntil) > now()) {
+      alarmMode = "timed";
+      alarmsUntil = Number(value.alarmsConsentUntil);
+    }
+    if (alarmMode === "timed" && alarmsUntil <= now()) {
+      alarmMode = "off";
+      alarmsUntil = 0;
+    }
+    if (presence === "desk") {
+      alarmMode = "off";
+      alarmsUntil = 0;
+    }
+    return { presence, alarmMode, alarmsUntil };
+  } catch {
+    return { ...DEFAULT_STATE };
+  }
+}
+
+function saveState() {
+  fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true });
+  fs.writeFileSync(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+function alarmActive() {
+  return (
+    state.alarmMode === "on" ||
+    (state.alarmMode === "timed" && state.alarmsUntil > now())
+  );
+}
+
+function statePayload() {
+  const active = alarmActive();
+  return {
+    presence: state.presence,
+    alarmMode: active ? state.alarmMode : "off",
+    alarmsUntil: active ? state.alarmsUntil : 0,
+    alarmsActive: active,
+  };
+}
+
+function broadcastState() {
+  broadcast({ type: "state", state: statePayload() });
+}
 
 function clamp(value, min, max) {
   const number = Number(value);
@@ -440,6 +505,7 @@ async function handle(req, res) {
       pending: pending.size,
       clients: wss.clients.size,
       events: events.length,
+      ...statePayload(),
       activeAlarm: activeAlarm
         ? {
             agent: activeAlarm.agent,
@@ -470,6 +536,88 @@ async function handle(req, res) {
     return json(res, 401, { ok: false, error: "unauthorized" });
   }
 
+  if (req.method === "GET" && route === "/status") {
+    return json(res, 200, {
+      ok: true,
+      ...statePayload(),
+      clients: wss.clients.size,
+      pending: pending.size,
+      activeAlarm: activeAlarm
+        ? {
+            agent: activeAlarm.agent,
+            project: activeAlarm.project,
+            askId: activeAlarm.askId,
+            rings: activeAlarm.rings,
+          }
+        : null,
+    });
+  }
+
+  if (req.method === "POST" && route === "/presence") {
+    const input = await readBody(req);
+    if (!["desk", "away"].includes(input.mode)) {
+      return json(res, 400, { ok: false, error: "mode must be desk or away" });
+    }
+    state.presence = input.mode;
+    if (input.mode === "desk") {
+      state.alarmMode = "off";
+      state.alarmsUntil = 0;
+      const ids = [];
+      for (const entry of pending.values()) {
+        clearEscalation(entry);
+        entry.stopped = true;
+        if (entry.lease) {
+          ids.push(entry.lease.askId);
+          releaseLease(entry.lease, "desk");
+        }
+      }
+      for (const askId of ids) {
+        broadcast({ type: "leaseEnded", askId, reason: "desk" });
+      }
+    }
+    saveState();
+    broadcast({ type: "presence", mode: state.presence });
+    broadcastState();
+    return json(res, 200, { ok: true, ...statePayload() });
+  }
+
+  if (req.method === "POST" && route === "/alarm") {
+    if (state.presence === "desk") {
+      return json(res, 409, {
+        ok: false,
+        error: "at_desk",
+        message: "Alarms cannot be enabled while at the desk.",
+      });
+    }
+    const input = await readBody(req);
+    const mode = input.mode;
+    if (!["off", "on", "timed"].includes(mode)) {
+      return json(res, 400, {
+        ok: false,
+        error: "mode must be off, on, or timed",
+      });
+    }
+    if (mode === "off") {
+      state.alarmMode = "off";
+      state.alarmsUntil = 0;
+      if (activeAlarm) {
+        const askId = activeAlarm.askId;
+        releaseLease(activeAlarm, "alarm-off");
+        broadcast({ type: "leaseEnded", askId, reason: "alarm-off" });
+      }
+    } else if (mode === "on") {
+      state.alarmMode = "on";
+      state.alarmsUntil = 0;
+    } else {
+      const minutes = clamp(input.minutes ?? 30, 1, 1440);
+      state.alarmMode = "timed";
+      state.alarmsUntil = now() + minutes * 60_000;
+    }
+    saveState();
+    broadcastState();
+    return json(res, 200, { ok: true, ...statePayload() });
+  }
+
   if (req.method === "GET" && route === "/events") {
     const limit = Math.min(Number(url.searchParams.get("limit") || 30), MAX_EVENTS);
     return json(res, 200, { events: events.slice(-limit) });
@@ -477,6 +625,9 @@ async function handle(req, res) {
 
   if (req.method === "POST" && route === "/event") {
     const input = await readBody(req);
+    if (state.presence === "desk") {
+      return json(res, 200, { ok: true, suppressed: "at-desk" });
+    }
     const event = makeEvent(input);
     if (deduped(input, event)) {
       return json(res, 200, { ok: true, deduped: true });
@@ -488,6 +639,20 @@ async function handle(req, res) {
 
   if (req.method === "POST" && route === "/ask") {
     const input = await readBody(req);
+    if (state.presence === "desk") {
+      return json(res, 200, {
+        status: "desk",
+        message:
+          "The user is at their machine. Ask the question in the conversation instead.",
+      });
+    }
+    if (wss.clients.size === 0) {
+      return json(res, 200, {
+        status: "unavailable",
+        message:
+          "No phone is connected. Ask the question in the conversation instead.",
+      });
+    }
     const id = `evt_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
     const timeoutSeconds = Math.max(
       5,
@@ -509,6 +674,13 @@ async function handle(req, res) {
       },
       id,
     );
+
+    const alarmRequested = input.urgent === true;
+    let alarmAllowed;
+    if (alarmRequested) {
+      alarmAllowed = alarmActive();
+      if (!alarmAllowed) event.urgent = false;
+    }
 
     const escalateAfterSeconds = clamp(
       input.escalateAfterSeconds ?? ESCALATION.afterSeconds,
@@ -574,10 +746,20 @@ async function handle(req, res) {
         ? `${alarm.holder.agent}/${alarm.holder.project}`
         : "",
       "x-alarm-retry-after": String(alarm.retryAfterSeconds || 0),
+      "x-alarm-mode": statePayload().alarmMode,
+      "x-alarm-allowed": alarmAllowed === undefined ? "" : String(alarmAllowed),
     });
     res.flushHeaders();
     const result = await answer;
-    res.end(JSON.stringify({ ...result, askId: id, alarm }));
+    res.end(
+      JSON.stringify({
+        ...result,
+        askId: id,
+        alarm,
+        alarmMode: statePayload().alarmMode,
+        ...(alarmRequested ? { alarmAllowed } : {}),
+      }),
+    );
     return;
   }
 

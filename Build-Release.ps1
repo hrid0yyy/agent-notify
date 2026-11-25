@@ -150,7 +150,7 @@ $Bundle = Join-Path $PublishRoot "agent-notify-$Version"
 New-Item -ItemType Directory -Force -Path $Bundle | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Bundle "app") | Out-Null
 
-foreach ($item in @("bridge", "mcp", "hooks", "lib", "opencode", "scripts")) {
+foreach ($item in @("bridge", "mcp", "hooks", "lib", "opencode", "scripts", "tray")) {
     Copy-Item -Recurse -Force (Join-Path $Root $item) (Join-Path $Bundle $item)
 }
 foreach ($file in @("README.md", "SETUP.md", "RELEASE.md", "THIRD_PARTY_NOTICES.md", "VERSION", "config.example.json", "package.json", "package-lock.json")) {
@@ -249,9 +249,9 @@ $notes = @"
 1. Download ``agent-notify-$Version-windows.zip``.
 2. Extract it anywhere.
 3. Double-click ``Setup.cmd``.
-4. Setup copies the app to ``%LOCALAPPDATA%\AgentNotify``, installs autostart,
-   configures Claude Code / OpenCode, starts the bridge, and sets up the phone
-   over ADB or with a QR.
+4. Setup copies the app to ``%LOCALAPPDATA%\AgentNotify``, installs the bridge
+   and tray autostarts, configures Claude Code / OpenCode, starts the bridge and
+   tray, and sets up the phone over ADB or with a QR.
 5. Allow notifications, then disable battery optimization for Agent Notify and Tailscale.
 
 ## Assets

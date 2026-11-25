@@ -20,12 +20,22 @@ MCP notify/ask   ──┘          │
 - **Task finished / failed notifications** from Claude Code and OpenCode.
 - **Permission approvals** with Allow / Deny from the notification shade.
 - **Free-text answers** for open-ended agent questions.
+- **Presence control:** **At desk** mutes the phone completely; **Away**
+  delivers notifications and questions. Switch from the phone app or the
+  Windows tray.
+- **Alarm control:** while Away, urgent alarms are **Off / On / 30 min**.
+  At desk they are forced off and cannot be enabled.
+- **Windows tray:** presence, alarm mode, pending state, and quick access to
+  the config folder.
 - **Urgent escalation:** after an unanswered request, the phone wakes, plays
   the alarm stream, vibrates, and shows a full-screen approval card over the
   lock screen.
 - **One global alarm slot.** Normal notifications are unlimited, but only one
   agent can own the alarm at a time. Others are told `busy` and still get a
   normal notification.
+- **At desk / Away** from the phone or tray; At desk mutes everything and
+  resets alarms to Off.
+- **Away** keeps notifications and questions on; only alarms need a choice.
 - **Guardrails:** per-agent/project cooldowns, hourly/daily budgets, a maximum
   lease, a global gap, and an unanswered-alarm penalty.
 - **Source labels:** project in the title, agent in the subtext, agent-colored
@@ -58,8 +68,8 @@ See [SETUP.md](SETUP.md) for the full end-user guide.
 - Writes `~/.agent-notify/config.json` with a new token.
 - Installs the OpenCode plugin and MCP server.
 - Merges Claude Code hooks and installs its MCP server.
-- Installs a hidden bridge supervisor at Windows logon.
-- Starts the bridge and verifies its health.
+- Installs a hidden bridge supervisor and the Windows tray at logon.
+- Starts the bridge and tray, then verifies the bridge health.
 - Installs the APK and sends the setup deep link when a phone is connected;
   otherwise it opens a setup QR in Paint.
 
@@ -70,6 +80,34 @@ agentnotify://setup?url=<bridge-url>&token=<token>
 ```
 
 The app saves it and connects immediately. Keep that QR private.
+
+## Presence and alarms
+
+**Presence** is the master switch:
+
+- **At desk** — notifications, questions, hooks, and alarms are all off.
+  Alarm mode is reset to **Off** and the controls are disabled.
+  `ask_user` returns immediately with “ask in the conversation.”
+- **Away** — notifications and questions are on automatically. There is no
+  toggle and no per-call approval. Alarms are the only setting.
+
+**Alarms** have exactly three states while Away:
+
+- **Off** — urgent requests become normal notifications; the agent is told the
+  alarm was not armed.
+- **On** — alarms stay enabled until you turn them off.
+- **On for 30 minutes** — expires automatically.
+
+At desk, alarms are forced off and cannot be enabled. Switching At desk always
+resets the alarm setting to Off. Switching back to Away leaves alarms Off until
+you choose otherwise.
+
+Use the phone app or the Windows tray. Agents cannot change presence or alarm
+mode.
+
+Agents are instructed not to use Agent Notify on their own; only when the user
+asks. Hooks (`Stop`, `Notification`, `PermissionRequest`, OpenCode execution
+events) simply follow **Away / At desk**.
 
 ## Phone app
 
@@ -115,15 +153,24 @@ The global plugin reports:
 }
 ```
 
-`ask_user` blocks until the phone answers or the timeout expires. If the alarm
-slot is busy or the agent is over budget, the result includes a note such as:
+`notify_user` and `ask_user` work whenever you are Away; they are suppressed or
+fail fast at the desk. `ask_user` blocks until the phone answers or the timeout
+expires. If the alarm slot is busy, alarms are off, or the agent is over
+budget, the result includes a note such as:
 
 ```text
 Alarm not armed: busy (held by claude-code/agent-notify). The question was
 still delivered as a normal notification; retry after about 184s.
 ```
 
+When alarms are Off, the note is simply: “The alarm was not armed because alarms
+are off.”
+
 ## Escalation
+
+Escalation only runs while you are **Away** and alarms are **On** or **On for
+30 minutes**. At desk, or with alarms Off, an urgent request becomes a normal
+notification.
 
 Defaults live in `~/.agent-notify/config.json`:
 

@@ -76,7 +76,7 @@ The script:
 6. Bundles `runtime\node.exe` unless `-NoRuntime`.
 7. Installs production `node_modules` into the bundle.
 8. Adds `Setup.cmd`, `setup.ps1`, `Uninstall.cmd`, `Test.cmd`,
-   `Test-Alarm.cmd`, docs, config example, and the APK.
+   `Test-Alarm.cmd`, the tray app, docs, config example, and the APK.
 9. Creates the Windows zip, standalone APK, SHA256 checksums, and release
    notes.
 

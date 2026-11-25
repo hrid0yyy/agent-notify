@@ -252,6 +252,17 @@ class NotifyService : Service() {
                     }
                 }
 
+                "presence" -> {
+                    if (message.optString("mode") == "desk") {
+                        activeAlarmId?.let { askId ->
+                            Notifications.cancelAlarm(this, askId)
+                            closeAlarmScreen(askId)
+                        }
+                        activeAlarmId = null
+                        Ringing.stop()
+                    }
+                }
+
                 "hello" -> updateStatus("Connected")
             }
         } catch (_: Exception) {

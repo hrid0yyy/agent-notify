@@ -18,6 +18,7 @@ data class AgentEvent(
     val askId: String?,
     val options: List<EventOption>,
     val allowText: Boolean,
+    val createdAt: Long,
 ) {
     val attention: Boolean
         get() = kind == "needs_input" || kind == "error"
@@ -49,6 +50,7 @@ object EventParser {
             askId = obj.optString("askId").takeIf { it.isNotBlank() },
             options = options,
             allowText = obj.optBoolean("allowText", false),
+            createdAt = obj.optLong("createdAt", 0L),
         )
     }
 }

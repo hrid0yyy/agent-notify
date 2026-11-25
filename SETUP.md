@@ -91,7 +91,23 @@ The status card should say **Connected**.
 > The persistent **Agent Notify · Connected** notification is the foreground
 > service that keeps the connection alive. It is expected.
 
-## 5. Test it
+## 5. Use the PC tray
+
+A small tray icon appears near the clock when Setup finishes.
+
+It gives you:
+
+- **At desk** — mute the phone completely. Notifications, questions, hooks,
+  and alarms are off. Alarm settings reset to Off and cannot be enabled.
+- **Away** — notifications and questions are on automatically. Alarms have a
+  submenu: **Off**, **On**, or **On for 30 minutes**.
+- **Open config folder** — open `%USERPROFILE%\.agent-notify`.
+- **Quit** — close the tray until next logon.
+
+The phone app has the same At desk/Away and alarm controls. The tray and phone
+stay in sync.
+
+## 6. Test it
 
 In the extracted release folder, double-click:
 
@@ -107,11 +123,14 @@ screen, and ring. Use **Stop alarming** when finished.
 | --- | --- |
 | Installed app files | `%LOCALAPPDATA%\AgentNotify` |
 | Bridge config/token | `%USERPROFILE%\.agent-notify\config.json` |
+| Presence/alarm state | `%USERPROFILE%\.agent-notify\state.json` |
+| Tray log | `%USERPROFILE%\.agent-notify\tray.log` |
 | Bridge log | not written unless you run it manually |
 | OpenCode plugin | `%USERPROFILE%\.config\opencode\plugins\agent-notify.js` |
 | OpenCode config | `%USERPROFILE%\.config\opencode\opencode.json` |
 | Claude Code hooks | `%USERPROFILE%\.claude\settings.json` |
-| Autostart | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AgentNotifyBridge.vbs` |
+| Bridge autostart | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AgentNotifyBridge.vbs` |
+| Tray autostart | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AgentNotifyTray.vbs` |
 | Android app | package `dev.hridoy.agentnotify` |
 
 ## Updating
@@ -157,6 +176,22 @@ Install the APK first, then scan again. If your camera app does not handle
 custom URLs, open the app and enter the URL/token manually from
 `%USERPROFILE%\.agent-notify\config.json`.
 
+### The tray icon is missing
+
+Run:
+
+```text
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AgentNotifyTray.vbs
+```
+
+If it still does not appear, check `%USERPROFILE%\.agent-notify\tray.log` and
+re-run **Setup.cmd**.
+
+### An agent says the alarm was not armed
+
+Alarms are off, or you are at the desk. Switch to **Away** and set alarms to
+**On** or **On for 30 minutes** if you want urgent requests to ring.
+
 ### App says Offline / retrying
 
 - Tailscale must be connected on both devices.
@@ -168,6 +203,11 @@ custom URLs, open the app and enter the URL/token manually from
 Grant **Full-screen notifications** for Agent Notify in Android settings. The
 app shows the current status on its settings screen. Alarm audio still uses the
 alarm stream, but Do Not Disturb may suppress it unless alarms are allowed.
+
+### Phone is quiet while I am at the machine
+
+Check the tray or the phone app: **At desk** mutes everything, including alarms.
+Switch to **Away** to receive notifications again.
 
 ### Alarm says another agent is busy
 
