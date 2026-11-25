@@ -249,18 +249,20 @@ $notes = @"
 1. Download ``agent-notify-$Version-windows.zip``.
 2. Extract it anywhere.
 3. Double-click ``Setup.cmd``.
-4. Scan the setup QR with the phone camera, or let the installer configure it over ADB.
+4. Setup copies the app to ``%LOCALAPPDATA%\AgentNotify``, installs autostart,
+   configures Claude Code / OpenCode, starts the bridge, and sets up the phone
+   over ADB or with a QR.
 5. Allow notifications, then disable battery optimization for Agent Notify and Tailscale.
 
 ## Assets
 
-- ``agent-notify-$Version-windows.zip`` — self-contained Windows bundle (Node runtime included)
-- ``agent-notify-$Version.apk`` — Android APK
+- ``agent-notify-$Version-windows.zip`` - self-contained Windows bundle (Node runtime included)
+- ``agent-notify-$Version.apk`` - Android APK
 - ``SHA256SUMS.txt``
 
 Keep the release keystore backed up. Losing it prevents future APK updates from installing over existing versions.
 "@
-Set-Content -Path (Join-Path $PublishRoot "release-notes.md") -Value $notes -Encoding UTF8
+Set-Content -Path (Join-Path $PublishRoot "release-notes.md") -Value $notes -Encoding ASCII
 
 Write-Host ""
 Write-Host "Release built:" -ForegroundColor Green
