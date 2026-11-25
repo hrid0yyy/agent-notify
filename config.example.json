@@ -1,0 +1,25 @@
+{
+  "url": "https://your-host.tailnet.ts.net",
+  "token": "REPLACE_WITH_A_64_CHARACTER_HEX_TOKEN",
+  "port": 8787,
+  "permissionWaitSeconds": 600,
+  "escalation": {
+    "enabled": true,
+    "afterSeconds": 120,
+    "repeatSeconds": 60,
+    "maxRings": 3,
+    "ringDurationSeconds": 45,
+    "leaseSeconds": 300,
+    "cooldownSeconds": 600,
+    "maxPerHour": 3,
+    "maxPerDay": 10,
+    "minGapSeconds": 30,
+    "unansweredPenaltySeconds": 1800,
+    "quietHours": {
+      "enabled": false,
+      "start": "22:00",
+      "end": "08:00",
+      "allowUrgent": true
+    }
+  }
+}

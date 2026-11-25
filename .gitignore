@@ -1,0 +1,14 @@
+node_modules/
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+dist/
+publish/
+*.log
+.env
+*.jks
+*.keystore
+keystore.properties
+.agent-notify/
+setup-qr.png

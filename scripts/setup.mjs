@@ -1,0 +1,505 @@
+#!/usr/bin/env node
+/**
+ * Agent Notify setup.
+ *
+ * Development:
+ *   node scripts/setup.mjs
+ *   node scripts/setup.mjs --apply
+ *
+ * End-user release bundle:
+ *   node scripts/setup.mjs --release
+ *
+ * --release also installs the autostart supervisor, starts the bridge, and
+ * installs/configures the phone over ADB or shows a setup QR.
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CONFIG_DIR = path.join(os.homedir(), ".agent-notify");
+const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const args = process.argv.slice(2);
+const has = (flag) => args.includes(flag);
+const valueOf = (flag) => {
+  const index = args.indexOf(flag);
+  return index >= 0 ? args[index + 1] : undefined;
+};
+const releaseMode = has("--release");
+const apply = has("--apply") || releaseMode;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function tailnetInfo() {
+  const info = { dns: "", ip: "", serve: false };
+  try {
+    const raw = execFileSync("tailscale", ["status", "--json"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    info.dns = JSON.parse(raw).Self?.DNSName?.replace(/\.$/, "") || "";
+  } catch {
+    // Tailscale may not be installed or logged in.
+  }
+  try {
+    info.ip = execFileSync("tailscale", ["ip", "-4"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .trim()
+      .split(/\r?\n/)[0];
+  } catch {
+    // fall through
+  }
+  try {
+    const status = execFileSync("tailscale", ["serve", "status"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    info.serve = status.includes("8787") && !status.includes("No serve config");
+  } catch {
+    info.serve = false;
+  }
+  return info;
+}
+
+function readJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function backup(file) {
+  if (!fs.existsSync(file)) return;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  fs.copyFileSync(file, `${file}.bak-agent-notify-${stamp}`);
+}
+
+function commandExists(command) {
+  try {
+    if (process.platform === "win32") {
+      execFileSync("where", [command], { stdio: "ignore" });
+    } else {
+      execFileSync("which", [command], { stdio: "ignore" });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function installAutostart() {
+  if (process.platform !== "win32") return;
+  const startup = path.join(
+    process.env.APPDATA ||
+      path.join(os.homedir(), "AppData", "Roaming"),
+    "Microsoft",
+    "Windows",
+    "Start Menu",
+    "Programs",
+    "Startup",
+  );
+  fs.mkdirSync(startup, { recursive: true });
+  const vbsPath = path.join(startup, "AgentNotifyBridge.vbs");
+  const nodeExe = process.execPath.replaceAll('"', '""');
+  const root = ROOT.replaceAll('"', '""');
+  const vbs = `' Agent Notify bridge supervisor (generated)
+Set sh = CreateObject("WScript.Shell")
+sh.CurrentDirectory = "${root}"
+Do
+  sh.Run """${nodeExe}"" ""bridge\\start.mjs""", 0, True
+  WScript.Sleep 5000
+Loop
+`;
+  fs.writeFileSync(vbsPath, vbs, "ascii");
+  console.log(`Startup supervisor: ${vbsPath}`);
+}
+
+async function isHealthy() {
+  try {
+    const response = await fetch(`${url}/health`, {
+      signal: AbortSignal.timeout(1200),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureBridge() {
+  if (await isHealthy()) {
+    console.log(`Bridge already running: ${url}`);
+    return true;
+  }
+  const child = spawn(
+    process.execPath,
+    [path.join(ROOT, "bridge", "start.mjs")],
+    {
+      cwd: ROOT,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    },
+  );
+  child.unref();
+  for (let i = 0; i < 30; i += 1) {
+    await sleep(500);
+    if (await isHealthy()) {
+      console.log(`Bridge started: ${url}`);
+      return true;
+    }
+  }
+  console.error(`Bridge did not become healthy at ${url}`);
+  return false;
+}
+
+function findApk() {
+  const directories = [path.join(ROOT, "app"), path.join(ROOT, "dist")];
+  for (const directory of directories) {
+    if (!fs.existsSync(directory)) continue;
+    const apk = fs
+      .readdirSync(directory)
+      .filter((name) => name.toLowerCase().endsWith(".apk"))
+      .map((name) => path.join(directory, name))
+      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+    if (apk) return apk;
+  }
+  return null;
+}
+
+function findAdbSerial() {
+  if (!commandExists("adb")) return null;
+  try {
+    const output = execFileSync("adb", ["devices"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const line = output
+      .split(/\r?\n/)
+      .find((candidate) => /\tdevice\b/.test(candidate) && !candidate.includes("offline"));
+    return line?.split(/\s+/)[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function setupUri() {
+  const params = new URLSearchParams({ url, token });
+  return `agentnotify://setup?${params.toString()}`;
+}
+
+async function showSetupQr() {
+  const uri = setupUri();
+  const qrPath = path.join(CONFIG_DIR, "setup-qr.png");
+  try {
+    const QRCode = (await import("qrcode")).default;
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    await QRCode.toFile(qrPath, uri, {
+      width: 760,
+      margin: 2,
+      color: { dark: "#000000", light: "#FFFFFF" },
+    });
+    console.log(`\nScan this QR with the phone camera:\n  ${qrPath}`);
+    if (process.platform === "win32") {
+      spawn("mspaint.exe", [qrPath], { detached: true, stdio: "ignore" }).unref();
+    }
+  } catch {
+    console.log("\nCould not generate a QR image; enter the settings manually.");
+  }
+  console.log(`\nManual setup:`);
+  console.log(`  Bridge URL : ${url}`);
+  console.log(`  Token      : ${token}`);
+}
+
+async function installAndConfigurePhone(apk) {
+  const serial = findAdbSerial();
+  if (!serial) return false;
+  console.log(`Phone found over ADB: ${serial}`);
+  let installed = false;
+  try {
+    const output = execFileSync(
+      "adb",
+      ["-s", serial, "install", "-r", apk],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+    installed = /Success/i.test(output);
+    console.log(output.trim());
+  } catch (error) {
+    const detail = String(error.stderr || error.message || "");
+    if (detail.includes("UPDATE_INCOMPATIBLE") || detail.includes("signatures")) {
+      console.error(
+        "The existing app was signed with a different key. Uninstall the old Agent Notify app, then run setup again.",
+      );
+    } else {
+      console.error(`ADB install failed: ${detail.trim()}`);
+    }
+  }
+  if (!installed) return false;
+  for (const args of [
+    ["shell", "pm", "grant", "dev.hridoy.agentnotify", "android.permission.POST_NOTIFICATIONS"],
+    ["shell", "cmd", "deviceidle", "whitelist", "+dev.hridoy.agentnotify"],
+    ["shell", "cmd", "appops", "set", "dev.hridoy.agentnotify", "USE_FULL_SCREEN_INTENT", "allow"],
+  ]) {
+    try {
+      execFileSync("adb", ["-s", serial, ...args], { stdio: "ignore" });
+    } catch {
+      // Permission names differ across Android releases; the app can still ask.
+    }
+  }
+  try {
+    const uri = setupUri();
+    execFileSync(
+      "adb",
+      [
+        "-s",
+        serial,
+        "shell",
+        `am start -a android.intent.action.VIEW -d '${uri}'`,
+      ],
+      { stdio: "inherit" },
+    );
+    console.log("Phone configured from the setup deep link.");
+    return true;
+  } catch (error) {
+    console.error(`Could not open the setup deep link: ${error.message}`);
+    return false;
+  }
+}
+
+function installClaudeMcp() {
+  if (!commandExists("claude")) return;
+  try {
+    execFileSync("claude", ["mcp", "remove", "agent-notify", "-s", "user"], {
+      stdio: "ignore",
+    });
+  } catch {
+    // Not installed yet.
+  }
+  try {
+    execFileSync(
+      "claude",
+      ["mcp", "add", "--scope", "user", "agent-notify", "--", node, mcpScript],
+      { stdio: "inherit" },
+    );
+  } catch (error) {
+    console.error(`Could not add Claude Code MCP automatically: ${error.message}`);
+    console.error(
+      `Run: claude mcp add --scope user agent-notify -- "${node}" "${mcpScript}"`,
+    );
+  }
+}
+
+const existing = readJson(CONFIG_PATH, {});
+const tailnet = tailnetInfo();
+const detectedUrl = tailnet.serve && tailnet.dns
+  ? `https://${tailnet.dns}`
+  : tailnet.ip
+    ? `http://${tailnet.ip}:8787`
+    : "";
+const url = (
+  valueOf("--url") ||
+  detectedUrl ||
+  existing.url ||
+  "http://127.0.0.1:8787"
+).replace(/\/+$/, "");
+const token = has("--rotate")
+  ? randomBytes(32).toString("hex")
+  : existing.token || randomBytes(32).toString("hex");
+const permissionWaitSeconds = Math.max(
+  Number(existing.permissionWaitSeconds || 0),
+  600,
+);
+const escalationDefaults = {
+  enabled: true,
+  afterSeconds: 120,
+  repeatSeconds: 60,
+  maxRings: 3,
+  ringDurationSeconds: 45,
+  leaseSeconds: 300,
+  cooldownSeconds: 600,
+  maxPerHour: 3,
+  maxPerDay: 10,
+  minGapSeconds: 30,
+  unansweredPenaltySeconds: 1800,
+  quietHours: {
+    enabled: false,
+    start: "22:00",
+    end: "08:00",
+    allowUrgent: true,
+  },
+};
+
+writeJson(CONFIG_PATH, {
+  url,
+  token,
+  port: existing.port || 8787,
+  permissionWaitSeconds,
+  escalation: {
+    ...escalationDefaults,
+    ...(existing.escalation || {}),
+    quietHours: {
+      ...escalationDefaults.quietHours,
+      ...(existing.escalation?.quietHours || {}),
+    },
+  },
+});
+
+// Always install the current plugin file so edits in the repo take effect.
+const pluginSource = path.join(ROOT, "opencode", "agent-notify.js");
+const pluginTarget = path.join(
+  os.homedir(),
+  ".config",
+  "opencode",
+  "plugins",
+  "agent-notify.js",
+);
+fs.mkdirSync(path.dirname(pluginTarget), { recursive: true });
+fs.copyFileSync(pluginSource, pluginTarget);
+
+const node = process.execPath;
+const hookScript = path.join(ROOT, "hooks", "claude-hook.mjs");
+const mcpScript = path.join(ROOT, "mcp", "server.mjs");
+
+function claudeHooks() {
+  const command = (event, timeout) => ({
+    hooks: [{ type: "command", command: node, args: [hookScript, event], timeout }],
+  });
+  return {
+    Stop: [command("Stop", 15)],
+    StopFailure: [command("StopFailure", 15)],
+    Notification: [
+      {
+        matcher:
+          "permission_prompt|idle_prompt|agent_needs_input|agent_completed|elicitation_dialog|elicitation_url_dialog",
+        hooks: [
+          {
+            type: "command",
+            command: node,
+            args: [hookScript, "Notification"],
+            timeout: 15,
+          },
+        ],
+      },
+    ],
+    PermissionRequest: [command("PermissionRequest", permissionWaitSeconds + 30)],
+  };
+}
+
+if (apply) {
+  const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
+  if (fs.existsSync(path.dirname(settingsPath))) {
+    const settings = readJson(settingsPath, {});
+    backup(settingsPath);
+    settings.hooks ||= {};
+    for (const [event, groups] of Object.entries(claudeHooks())) {
+      const current = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : [];
+      settings.hooks[event] = current
+        .filter((group) => !JSON.stringify(group).includes("agent-notify"))
+        .concat(groups);
+    }
+    writeJson(settingsPath, settings);
+    console.log(`Claude Code hooks installed: ${settingsPath}`);
+    installClaudeMcp();
+  }
+
+  const opencodePath = path.join(
+    os.homedir(),
+    ".config",
+    "opencode",
+    "opencode.json",
+  );
+  const opencode = readJson(opencodePath, null);
+  if (opencode) {
+    backup(opencodePath);
+    opencode.mcp ||= {};
+    opencode.mcp.servers ||= {};
+    opencode.mcp.servers["agent-notify"] = {
+      type: "local",
+      command: [node, mcpScript],
+      disabled: false,
+      timeout: { execution: 900_000 },
+    };
+    writeJson(opencodePath, opencode);
+    console.log(`OpenCode MCP server installed: ${opencodePath}`);
+  }
+}
+
+if (has("--serve")) {
+  try {
+    const output = execFileSync("tailscale", ["serve", "--bg", "8787"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (output.trim()) console.log(output.trim());
+    console.log(
+      "Tailscale Serve is proxying https://<this-host>.<tailnet>.ts.net -> 127.0.0.1:8787",
+    );
+  } catch (error) {
+    console.error(`tailscale serve failed: ${error.stderr || error.message}`);
+    console.error("Run: tailscale serve --bg 8787");
+  }
+}
+
+if (releaseMode) {
+  installAutostart();
+  const healthy = await ensureBridge();
+  const apk = findApk();
+  let phoneConfigured = false;
+  if (apk) {
+    phoneConfigured = await installAndConfigurePhone(apk);
+  }
+  if (!phoneConfigured) {
+    await showSetupQr();
+  }
+
+  console.log(`
+Agent Notify is ready
+---------------------
+config : ${CONFIG_PATH}
+bridge : ${url}${healthy ? "  (running)" : "  (NOT running)"}
+plugin : ${pluginTarget}
+phone  : ${phoneConfigured ? "installed and configured" : "scan the QR above"}
+
+The bridge also starts automatically at logon.
+`);
+} else {
+  console.log(`
+Agent Notify configured
+-----------------------
+config : ${CONFIG_PATH}
+bridge : ${url}
+plugin : ${pluginTarget}
+hook   : ${hookScript}
+mcp    : ${mcpScript}
+
+Run the bridge in one terminal:
+  cd "${ROOT}"
+  npm run bridge
+
+Then in the Android app, use:
+  Bridge URL : ${url}
+  Token      : ${token}
+
+Claude Code MCP:
+  claude mcp add --scope user agent-notify -- "${node}" "${mcpScript}"
+
+Useful:
+  npm run test:event              # one test notification
+  node scripts/test-event.mjs --ask   # test Allow / Deny buttons
+  npm run test:alarm                 # test the alarm
+`);
+
+  if (!apply) {
+    console.log(`Claude Code hooks snippet (or re-run with --apply):\n`);
+    console.log(JSON.stringify({ hooks: claudeHooks() }, null, 2));
+  }
+}

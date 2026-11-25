@@ -1,0 +1,23 @@
+{
+  "name": "agent-notify",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phone notifications and remote approvals for coding agents, over Tailscale.",
+  "scripts": {
+    "bridge": "node bridge/start.mjs",
+    "mcp": "node mcp/server.mjs",
+    "setup": "node scripts/setup.mjs",
+    "test:event": "node scripts/test-event.mjs",
+    "test:alarm": "node scripts/test-event.mjs --alarm",
+    "selftest": "node scripts/selftest.mjs",
+    "selftest:alarm": "node scripts/selftest-alarm.mjs",
+    "pair:qr": "node scripts/pair-qr.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "qrcode": "^1.5.4",
+    "ws": "8.23.0",
+    "zod": "4.6.7"
+  }
+}
