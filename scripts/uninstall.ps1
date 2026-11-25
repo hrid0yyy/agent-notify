@@ -16,6 +16,12 @@ foreach ($proc in $procs) {
     Write-Output "Stopped bridge process $($proc.ProcessId)"
 }
 
+$Installed = Join-Path $env:LOCALAPPDATA "AgentNotify"
+if (Test-Path $Installed) {
+    Remove-Item -Recurse -Force $Installed -ErrorAction SilentlyContinue
+    Write-Output "Removed installed files: $Installed"
+}
+
 Write-Output ""
 Write-Output "Agent Notify bridge autostart removed."
 Write-Output "Config kept at $env:USERPROFILE\.agent-notify\config.json"

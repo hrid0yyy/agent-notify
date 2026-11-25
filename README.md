@@ -53,6 +53,8 @@ See [SETUP.md](SETUP.md) for the full end-user guide.
 
 - Detects Tailscale and chooses a direct tailnet connection or an existing
   Tailscale Serve HTTPS endpoint.
+- Copies the app to `%LOCALAPPDATA%\AgentNotify` so the extracted release can
+  be moved or deleted afterward.
 - Writes `~/.agent-notify/config.json` with a new token.
 - Installs the OpenCode plugin and MCP server.
 - Merges Claude Code hooks and installs its MCP server.

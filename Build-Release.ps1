@@ -136,7 +136,16 @@ $Apk = Join-Path $Root "android\app\build\outputs\apk\release\app-release.apk"
 if (-not (Test-Path $Apk)) { throw "Release APK not found at $Apk" }
 
 $PublishRoot = Join-Path $Root "publish"
-if (Test-Path $PublishRoot) { Remove-Item -Recurse -Force $PublishRoot }
+if (Test-Path $PublishRoot) {
+    $escapedPublish = [regex]::Escape($PublishRoot)
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+        Where-Object { $_.CommandLine -match $escapedPublish } |
+        ForEach-Object {
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+    Start-Sleep -Milliseconds 800
+    Remove-Item -Recurse -Force $PublishRoot
+}
 $Bundle = Join-Path $PublishRoot "agent-notify-$Version"
 New-Item -ItemType Directory -Force -Path $Bundle | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Bundle "app") | Out-Null

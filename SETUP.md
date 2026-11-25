@@ -27,13 +27,14 @@ enable **Always-on VPN** in Android's VPN settings.
 1. Open the private `agent-notify` GitHub repository.
 2. Open **Releases**.
 3. Download `agent-notify-<version>-windows.zip`.
-4. Extract it to a folder you will keep, for example:
+4. Extract it anywhere temporary, for example:
 
    ```text
-   C:\Users\<you>\AgentNotify
+   C:\Users\<you>\Downloads\AgentNotify
    ```
 
-Do not move the folder after setup; the autostart entry points at it.
+Setup copies the application to `%LOCALAPPDATA%\AgentNotify`; you can move or
+delete the extracted download afterward.
 
 ## 3. Run Setup
 
@@ -104,6 +105,7 @@ screen, and ring. Use **Stop alarming** when finished.
 
 | Item | Location |
 | --- | --- |
+| Installed app files | `%LOCALAPPDATA%\AgentNotify` |
 | Bridge config/token | `%USERPROFILE%\.agent-notify\config.json` |
 | Bridge log | not written unless you run it manually |
 | OpenCode plugin | `%USERPROFILE%\.config\opencode\plugins\agent-notify.js` |
@@ -115,9 +117,10 @@ screen, and ring. Use **Stop alarming** when finished.
 ## Updating
 
 1. Download the newer zip from Releases.
-2. Extract it over the old folder (or to a new folder and run Setup).
-3. Run **`Setup.cmd`** again.
-4. The existing token and app configuration are preserved.
+2. Extract it anywhere.
+3. Close Claude Code / OpenCode if Setup reports locked files.
+4. Run **`Setup.cmd`** again.
+5. The existing token and app configuration are preserved.
 
 APK updates require the same release signing key. Official releases keep that
 key stable.

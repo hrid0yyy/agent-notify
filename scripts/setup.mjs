@@ -20,6 +20,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SOURCE_ROOT = ROOT;
+let APP_ROOT = ROOT;
 const CONFIG_DIR = path.join(os.homedir(), ".agent-notify");
 const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 const args = process.argv.slice(2);
@@ -110,8 +112,10 @@ function installAutostart() {
   );
   fs.mkdirSync(startup, { recursive: true });
   const vbsPath = path.join(startup, "AgentNotifyBridge.vbs");
-  const nodeExe = process.execPath.replaceAll('"', '""');
-  const root = ROOT.replaceAll('"', '""');
+  const installedNode = path.join(APP_ROOT, "runtime", "node.exe");
+  const nodeExe = (fs.existsSync(installedNode) ? installedNode : process.execPath)
+    .replaceAll('"', '""');
+  const root = APP_ROOT.replaceAll('"', '""');
   const vbs = `' Agent Notify bridge supervisor (generated)
 Set sh = CreateObject("WScript.Shell")
 sh.CurrentDirectory = "${root}"
@@ -140,11 +144,12 @@ async function ensureBridge() {
     console.log(`Bridge already running: ${url}`);
     return true;
   }
+  const installedNode = path.join(APP_ROOT, "runtime", "node.exe");
   const child = spawn(
-    process.execPath,
-    [path.join(ROOT, "bridge", "start.mjs")],
+    fs.existsSync(installedNode) ? installedNode : process.execPath,
+    [path.join(APP_ROOT, "bridge", "start.mjs")],
     {
-      cwd: ROOT,
+      cwd: APP_ROOT,
       detached: true,
       stdio: "ignore",
       windowsHide: true,
@@ -163,7 +168,7 @@ async function ensureBridge() {
 }
 
 function findApk() {
-  const directories = [path.join(ROOT, "app"), path.join(ROOT, "dist")];
+  const directories = [path.join(SOURCE_ROOT, "app"), path.join(SOURCE_ROOT, "dist")];
   for (const directory of directories) {
     if (!fs.existsSync(directory)) continue;
     const apk = fs
@@ -353,8 +358,73 @@ writeJson(CONFIG_PATH, {
   },
 });
 
+if (releaseMode && process.platform === "win32") {
+  const localAppData =
+    process.env.LOCALAPPDATA ||
+    path.join(os.homedir(), "AppData", "Local");
+  const target = path.join(localAppData, "AgentNotify");
+  if (path.resolve(target) !== path.resolve(ROOT)) {
+    if (fs.existsSync(target)) {
+      const escaped = target.replaceAll("'", "''");
+      try {
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-Command",
+            `Get-CimInstance Win32_Process -Filter "Name='wscript.exe'" | Where-Object { $_.CommandLine -like '*AgentNotifyBridge.vbs*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`,
+          ],
+          { stdio: "ignore" },
+        );
+        await sleep(500);
+      } catch {
+        // Best effort. A locked file will surface as a copy error below.
+      }
+    }
+    try {
+      for (const item of [
+        "runtime",
+        "node_modules",
+        "bridge",
+        "mcp",
+        "hooks",
+        "lib",
+        "opencode",
+        "scripts",
+      ]) {
+        const source = path.join(ROOT, item);
+        if (fs.existsSync(source)) {
+          fs.cpSync(source, path.join(target, item), {
+            recursive: true,
+            force: true,
+          });
+        }
+      }
+      for (const file of ["package.json", "package-lock.json"]) {
+        const source = path.join(ROOT, file);
+        if (fs.existsSync(source)) {
+          fs.mkdirSync(target, { recursive: true });
+          fs.copyFileSync(source, path.join(target, file));
+        }
+      }
+      APP_ROOT = target;
+      console.log(`Application files installed: ${APP_ROOT}`);
+    } catch (error) {
+      console.error(
+        `Could not install application files to ${target}: ${error.message}`,
+      );
+      console.error(
+        "Close Agent Notify and any Claude Code / OpenCode sessions, then run setup again.",
+      );
+      process.exit(1);
+    }
+  } else {
+    APP_ROOT = target;
+  }
+}
+
 // Always install the current plugin file so edits in the repo take effect.
-const pluginSource = path.join(ROOT, "opencode", "agent-notify.js");
+const pluginSource = path.join(APP_ROOT, "opencode", "agent-notify.js");
 const pluginTarget = path.join(
   os.homedir(),
   ".config",
@@ -365,9 +435,10 @@ const pluginTarget = path.join(
 fs.mkdirSync(path.dirname(pluginTarget), { recursive: true });
 fs.copyFileSync(pluginSource, pluginTarget);
 
-const node = process.execPath;
-const hookScript = path.join(ROOT, "hooks", "claude-hook.mjs");
-const mcpScript = path.join(ROOT, "mcp", "server.mjs");
+const installedNode = path.join(APP_ROOT, "runtime", "node.exe");
+const node = fs.existsSync(installedNode) ? installedNode : process.execPath;
+const hookScript = path.join(APP_ROOT, "hooks", "claude-hook.mjs");
+const mcpScript = path.join(APP_ROOT, "mcp", "server.mjs");
 
 function claudeHooks() {
   const command = (event, timeout) => ({
