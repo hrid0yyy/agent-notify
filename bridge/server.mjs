@@ -623,6 +623,12 @@ async function handle(req, res) {
     return json(res, 200, { events: events.slice(-limit) });
   }
 
+  if (req.method === "DELETE" && route === "/events") {
+    events.length = 0;
+    broadcast({ type: "eventsCleared" });
+    return json(res, 200, { ok: true, cleared: true });
+  }
+
   if (req.method === "POST" && route === "/event") {
     const input = await readBody(req);
     if (state.presence === "desk") {

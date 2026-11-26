@@ -51,6 +51,16 @@ object BridgeApi {
         }
     }
 
+    fun deleteJson(
+        context: Context,
+        path: String,
+        onResult: (JSONObject?) -> Unit,
+    ) {
+        execute(context, "DELETE", path, null) { _, value ->
+            onResult(value)
+        }
+    }
+
     private fun execute(
         context: Context,
         method: String,
@@ -70,6 +80,8 @@ object BridgeApi {
                         .header("Authorization", "Bearer ${prefs.token}")
                     if (method == "GET") {
                         builder.get()
+                    } else if (method == "DELETE") {
+                        builder.delete()
                     } else {
                         builder.post((body ?: JSONObject()).toString().toRequestBody(json))
                     }

@@ -20,6 +20,7 @@ object Notifications {
     const val CHANNEL_ALARM = "agent_alarm"
     const val GROUP = "agent_notify_events"
     const val KEY_REPLY_TEXT = "reply_text"
+    private const val STATUS_NOTIFICATION_ID = 7201
 
     fun agentLabel(agent: String): String = when (agent) {
         "claude-code" -> "Claude Code"
@@ -178,7 +179,11 @@ object Notifications {
         builder.setPublicVersion(publicVersion)
 
         try {
-            NotificationManagerCompat.from(context).notify(event.id.hashCode(), builder.build())
+            val actionable =
+                event.askId != null || event.options.isNotEmpty() || event.allowText
+            val notificationId =
+                if (actionable) event.id.hashCode() else STATUS_NOTIFICATION_ID
+            NotificationManagerCompat.from(context).notify(notificationId, builder.build())
         } catch (_: SecurityException) {
             // Notification permission was revoked between the check and the call.
         }
@@ -278,5 +283,9 @@ object Notifications {
 
     fun cancel(context: Context, eventId: String) {
         NotificationManagerCompat.from(context).cancel(eventId.hashCode())
+    }
+
+    fun cancelStatus(context: Context) {
+        NotificationManagerCompat.from(context).cancel(STATUS_NOTIFICATION_ID)
     }
 }

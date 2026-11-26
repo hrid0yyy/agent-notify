@@ -14,12 +14,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -31,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +41,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -70,6 +74,7 @@ fun HomeScreen(
     onSettings: () -> Unit,
     onPresence: (String) -> Unit,
     onAlarm: (String, Int) -> Unit,
+    onClearHistory: () -> Unit,
 ) {
     val atDesk = status?.atDesk == true
     Scaffold(
@@ -108,7 +113,11 @@ fun HomeScreen(
 
             Spacer(Modifier.height(36.dp))
 
-            RecentSection(events)
+            RecentSection(
+                events = events,
+                canClear = status != null,
+                onClear = onClearHistory,
+            )
             Spacer(Modifier.height(32.dp))
         }
     }
@@ -429,8 +438,36 @@ private fun AlarmOption(
 }
 
 @Composable
-private fun RecentSection(events: List<AgentEvent>) {
-    SectionLabel("Recent")
+private fun RecentSection(
+    events: List<AgentEvent>,
+    canClear: Boolean,
+    onClear: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SectionLabel("Recent")
+        Spacer(Modifier.weight(1f))
+        if (events.isNotEmpty()) {
+            TextButton(
+                onClick = onClear,
+                enabled = canClear,
+                contentPadding = PaddingValues(horizontal = 8.dp),
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+                ),
+            ) {
+                Text(
+                    "Clear",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+    }
     Spacer(Modifier.height(4.dp))
     if (events.isEmpty()) {
         Text(

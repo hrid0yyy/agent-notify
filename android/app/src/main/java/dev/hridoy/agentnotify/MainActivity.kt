@@ -147,6 +147,18 @@ private fun AgentNotifyApp(prefs: Prefs) {
         refreshKey += 1
     }
 
+    fun clearHistory() {
+        BridgeApi.deleteJson(context, "/events") { value ->
+            if (value?.optBoolean("ok") == true) {
+                events = emptyList()
+                Notifications.cancelStatus(context)
+            } else {
+                tell("Could not clear history.")
+            }
+            refreshKey += 1
+        }
+    }
+
     fun setPresence(mode: String) {
         BridgeApi.postJson(
             context,
@@ -263,6 +275,7 @@ private fun AgentNotifyApp(prefs: Prefs) {
                 onSettings = { screen = "settings" },
                 onPresence = { mode -> setPresence(mode) },
                 onAlarm = { mode, minutes -> setAlarm(mode, minutes) },
+                onClearHistory = { clearHistory() },
             )
         }
     }

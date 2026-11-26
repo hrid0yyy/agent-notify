@@ -87,5 +87,15 @@ assert(
   "websocket receives resolution",
 );
 
+const clearResponse = await fetch(`${BASE}/events`, {
+  method: "DELETE",
+  headers,
+});
+assert(clearResponse.ok, "clear events endpoint");
+const cleared = await fetch(`${BASE}/events`, { headers }).then((response) =>
+  response.json(),
+);
+assert(cleared.events.length === 0, "events cleared");
+
 ws.close();
 console.log("\nbridge self-test passed");
