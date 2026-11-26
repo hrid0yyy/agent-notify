@@ -54,8 +54,9 @@ MCP notify/ask        ─┘          │
    [latest release](https://github.com/hrid0yyy/agent-notify/releases/latest).
 2. Extract it anywhere.
 3. Double-click **`Setup.cmd`**.
-4. Scan the setup QR with the phone camera, or let the installer configure the
-   phone over ADB.
+4. On the setup page that opens, scan QR 1 to install the app and QR 2 to pair,
+   then tap **Connect** on the phone. With ADB connected, the installer does
+   the install for you and you only tap **Connect**.
 5. Allow notifications and disable battery optimization for Agent Notify and
    Tailscale.
 
@@ -74,8 +75,13 @@ Codex, or any agent with PowerShell access on your Windows machine:
 > 2. Run
 >    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File setup.ps1`
 >    from the extracted folder. Do not use `Setup.cmd`; it pauses on errors.
-> 3. If an Android phone is connected over ADB, let Setup install and configure
->    the APK. Otherwise, show me the setup QR and wait for me to scan it.
+>    Setup checks Tailscale first. If it says Tailscale is missing, ask me
+>    before installing it, then rerun with `setup.ps1 --install-tailscale`. If it
+>    opens a Tailscale sign-in page, tell me to sign in and wait.
+> 3. If an Android phone is connected over ADB, let Setup install the APK and
+>    tell me to tap **Connect** on the phone. Otherwise, Setup opens a page with
+>    two QR codes: tell me to scan the first to install the app and the second
+>    to pair, then tap **Connect**. Wait until I confirm.
 > 4. Verify the bridge health URL that Setup prints, and confirm that the
 >    bridge and tray are running.
 > 5. Tell me the bridge URL, which agent integrations were installed, and
@@ -86,10 +92,15 @@ Codex, or any agent with PowerShell access on your Windows machine:
 > config and backups in place.
 
 The agent handles the download, install, agent config files, bridge health, and
-phone handoff. You still scan the QR or approve the Android install if needed.
+phone handoff. You still sign in to Tailscale (on the PC and in the Tailscale
+app on the phone, same account), scan the QR codes, approve the Android
+install, and tap **Connect** on the phone.
 
 ## What Setup does
 
+- Checks Tailscale before changing anything: offers to install it with winget
+  if missing, opens the sign-in page if logged out, and stops with clear steps
+  if it still is not connected.
 - Detects Tailscale and chooses a direct tailnet connection or an existing
   Tailscale Serve HTTPS endpoint.
 - Copies the app to `%LOCALAPPDATA%\AgentNotify` so the extracted release can
@@ -102,7 +113,8 @@ phone handoff. You still scan the QR or approve the Android install if needed.
 - Installs a hidden bridge supervisor and the Windows tray at logon.
 - Starts the bridge and tray, then verifies the bridge health.
 - Installs the APK and sends the setup deep link when a phone is connected;
-  otherwise it opens a setup QR in Paint.
+  otherwise it opens a setup page with an install QR (APK download) and a
+  pairing QR. Either way the app asks you to confirm before pairing.
 
 The setup QR carries:
 

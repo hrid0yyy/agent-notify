@@ -9,8 +9,12 @@
  * End-user release bundle:
  *   node scripts/setup.mjs --release
  *
- * --release also installs the autostart supervisor, starts the bridge, and
- * installs/configures the phone over ADB or shows a setup QR.
+ * --release also checks Tailscale (signs in if needed), installs the autostart
+ * supervisor, starts the bridge, and installs/configures the phone over ADB or
+ * shows a setup page with install and pairing QR codes.
+ *
+ * --install-tailscale lets Setup install Tailscale with winget when it is
+ * missing, without asking (for agents running Setup non-interactively).
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -38,10 +42,207 @@ const releaseMode = has("--release");
 const apply = has("--apply") || releaseMode;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const TAILSCALE_DOWNLOAD = "https://tailscale.com/download/windows";
+
+/**
+ * Path to the Tailscale CLI, or null. Falls back to the default install
+ * folder because a fresh install is not on this process's PATH yet.
+ */
+function tailscaleExe() {
+  const override = process.env.AGENT_NOTIFY_TAILSCALE_EXE;
+  if (override) return fs.existsSync(override) ? override : null;
+  if (commandExists("tailscale")) return "tailscale";
+  if (process.platform === "win32") {
+    for (const base of [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]]) {
+      if (!base) continue;
+      const candidate = path.join(base, "Tailscale", "tailscale.exe");
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+/** { state, ip, authUrl } where state is Tailscale's BackendState or "NoService". */
+function tailscaleState(exe) {
+  try {
+    const raw = execFileSync(exe, ["status", "--json"], {
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+    const status = JSON.parse(raw);
+    const ip = (status.Self?.TailscaleIPs || status.TailscaleIPs || []).find((value) =>
+      /^\d+\.\d+\.\d+\.\d+$/.test(value),
+    ) || "";
+    return {
+      state: status.BackendState || "Unknown",
+      ip: status.BackendState === "Running" ? ip : "",
+      authUrl: status.AuthURL || "",
+    };
+  } catch (error) {
+    // `status` exits non-zero when stopped or logged out but still prints JSON.
+    const text = String(error.stdout || "");
+    try {
+      const status = JSON.parse(text);
+      return { state: status.BackendState || "Unknown", ip: "", authUrl: status.AuthURL || "" };
+    } catch {
+      return { state: "NoService", ip: "", authUrl: "" };
+    }
+  }
+}
+
+async function askYesNo(question) {
+  if (!process.stdin.isTTY) return false;
+  const readline = await import("node:readline/promises");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question(`${question} [Y/n] `)).trim().toLowerCase();
+    return answer === "" || answer === "y" || answer === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
+function openInBrowser(target) {
+  if (process.platform !== "win32") return;
+  const child = spawn("explorer.exe", [target], { detached: true, stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref();
+}
+
+function stopForTailscale(message) {
+  console.error(`\n${message}`);
+  console.error("Nothing was changed. Run Setup again once Tailscale is ready.");
+  process.exit(2);
+}
+
+function installTailscaleWithWinget() {
+  if (!commandExists("winget")) {
+    stopForTailscale(
+      `winget is not available, so Tailscale cannot be installed automatically.\nInstall it from ${TAILSCALE_DOWNLOAD}`,
+    );
+  }
+  console.log("Installing Tailscale with winget (Windows may ask for permission)...");
+  try {
+    execFileSync(
+      "winget",
+      [
+        "install",
+        "--id",
+        "Tailscale.Tailscale",
+        "--exact",
+        "--silent",
+        "--accept-package-agreements",
+        "--accept-source-agreements",
+      ],
+      { stdio: "inherit" },
+    );
+  } catch {
+    // winget returns non-zero for "already installed"; check below instead.
+  }
+  const exe = tailscaleExe();
+  if (!exe) {
+    stopForTailscale(`Tailscale did not install. Install it from ${TAILSCALE_DOWNLOAD}`);
+  }
+  console.log("Tailscale installed.");
+  return exe;
+}
+
+/**
+ * Release setup needs a working tailnet address: without one the pairing QR
+ * would point the phone at 127.0.0.1. Install (with consent) and sign in
+ * before anything is changed on this machine.
+ */
+async function ensureTailscale() {
+  console.log("Checking Tailscale...");
+  let exe = tailscaleExe();
+  if (!exe) {
+    console.log("Tailscale is not installed. Agent Notify uses it to reach your phone privately.");
+    const install =
+      has("--install-tailscale") ||
+      (await askYesNo("Install Tailscale now with winget?"));
+    if (!install) {
+      stopForTailscale(
+        `Install Tailscale from ${TAILSCALE_DOWNLOAD}\n` +
+          "or run Setup again with --install-tailscale to install it with winget.",
+      );
+    }
+    exe = installTailscaleWithWinget();
+  }
+
+  let status = tailscaleState(exe);
+  if (status.ip) {
+    console.log(`Tailscale connected: ${status.ip}`);
+    return;
+  }
+
+  if (status.state === "NoService" && process.platform === "win32") {
+    // The background service or tray app may not be running yet.
+    const folder = exe === "tailscale"
+      ? path.join(process.env.ProgramFiles || "C:\\Program Files", "Tailscale")
+      : path.dirname(exe);
+    const gui = path.join(folder, "tailscale-ipn.exe");
+    if (fs.existsSync(gui)) {
+      const app = spawn(gui, [], { detached: true, stdio: "ignore" });
+      app.on("error", () => {});
+      app.unref();
+    }
+    for (let i = 0; i < 10 && status.state === "NoService"; i += 1) {
+      await sleep(1000);
+      status = tailscaleState(exe);
+    }
+    if (status.state === "NoService") {
+      stopForTailscale(
+        "The Tailscale service is not running. Open the Tailscale app (or restart the PC) and try again.",
+      );
+    }
+  }
+
+  console.log("Tailscale is not connected. Opening the Tailscale sign-in...");
+  console.log("Sign in in your browser with the same account you will use on your phone.");
+  // `tailscale up` connects, or prints a login URL and waits for sign-in.
+  let opened = "";
+  const openUrl = (candidate) => {
+    if (!candidate || candidate === opened) return;
+    opened = candidate;
+    console.log(`  Sign-in link: ${candidate}`);
+    openInBrowser(candidate);
+  };
+  openUrl(status.authUrl);
+  const up = spawn(exe, ["up"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  up.on("error", () => {});
+  const onOutput = (chunk) => openUrl(String(chunk).match(/https:\/\/\S+/)?.[0]);
+  up.stdout?.on("data", onOutput);
+  up.stderr?.on("data", onOutput);
+
+  const waitSeconds = Number(process.env.AGENT_NOTIFY_TAILSCALE_WAIT || 300);
+  const deadline = Date.now() + waitSeconds * 1000;
+  let lastNotice = Date.now();
+  while (Date.now() < deadline) {
+    await sleep(2000);
+    status = tailscaleState(exe);
+    if (status.ip) break;
+    openUrl(status.authUrl);
+    if (Date.now() - lastNotice > 30_000) {
+      lastNotice = Date.now();
+      console.log("  Still waiting for Tailscale sign-in...");
+    }
+  }
+  if (up.exitCode === null) up.kill();
+  if (!status.ip) {
+    stopForTailscale(
+      "Tailscale did not connect. Open the Tailscale app, sign in, make sure it says Connected, then run Setup again.",
+    );
+  }
+  console.log(`Tailscale connected: ${status.ip}`);
+}
+
 function tailnetInfo() {
   const info = { dns: "", ip: "", serve: false };
+  const tailscale = tailscaleExe() || "tailscale";
   try {
-    const raw = execFileSync("tailscale", ["status", "--json"], {
+    const raw = execFileSync(tailscale, ["status", "--json"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -50,7 +251,7 @@ function tailnetInfo() {
     // Tailscale may not be installed or logged in.
   }
   try {
-    info.ip = execFileSync("tailscale", ["ip", "-4"], {
+    info.ip = execFileSync(tailscale, ["ip", "-4"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     })
@@ -60,7 +261,7 @@ function tailnetInfo() {
     // fall through
   }
   try {
-    const status = execFileSync("tailscale", ["serve", "status"], {
+    const status = execFileSync(tailscale, ["serve", "status"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -325,23 +526,118 @@ function setupUri() {
   return `agentnotify://setup?${params.toString()}`;
 }
 
+const RELEASES_URL = "https://github.com/hrid0yyy/agent-notify/releases";
+
+/** Direct download link for the APK that matches this bundle's version. */
+function apkDownloadUrl() {
+  const pkg = readJson(path.join(SOURCE_ROOT, "package.json"), {});
+  const version = /^\d+\.\d+\.\d+$/.test(pkg.version || "") ? pkg.version : "";
+  return version
+    ? `${RELEASES_URL}/download/v${version}/agent-notify-${version}.apk`
+    : `${RELEASES_URL}/latest`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[char]);
+}
+
+function setupPageHtml(installQr, pairQr, apkUrl) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Notify - phone setup</title>
+<style>
+  body { margin: 0; font: 16px/1.5 system-ui, "Segoe UI", sans-serif; background: #0b0f14; color: #e6edf3; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 24px 48px; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  .lead { color: #9aa7b4; margin: 0 0 28px; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+  section { background: #141a21; border: 1px solid #222b35; border-radius: 14px; padding: 22px; }
+  h2 { font-size: 19px; margin: 0 0 4px; }
+  .step { color: #7ce38b; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  img { display: block; width: 100%; max-width: 340px; margin: 16px auto; background: #fff; border-radius: 10px; }
+  ol { margin: 0; padding-left: 20px; color: #c5cfd9; }
+  li { margin: 4px 0; }
+  a { color: #8ab4f8; word-break: break-all; }
+  .note { margin-top: 24px; color: #9aa7b4; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Set up your phone</h1>
+  <p class="lead">Install Tailscale from the Play Store first and sign in with the same account as this PC.</p>
+  <div class="steps">
+    <section>
+      <div class="step">Step 1</div>
+      <h2>Install the app</h2>
+      <img src="${installQr}" alt="QR code that downloads the Agent Notify app">
+      <ol>
+        <li>Scan with the phone camera and download the APK.</li>
+        <li>Open it. If Android asks, allow installing apps from your browser.</li>
+        <li>Already installed? Skip to step 2.</li>
+      </ol>
+      <p class="note">Link: <a href="${escapeHtml(apkUrl)}">${escapeHtml(apkUrl)}</a></p>
+    </section>
+    <section>
+      <div class="step">Step 2</div>
+      <h2>Pair with this PC</h2>
+      <img src="${pairQr}" alt="QR code that pairs the app with this PC">
+      <ol>
+        <li>Scan with the phone camera.</li>
+        <li>Agent Notify opens. Tap <b>Connect</b>.</li>
+        <li>Allow notifications when asked.</li>
+      </ol>
+    </section>
+  </div>
+  <p class="note">Keep the step 2 code private: it contains your bridge token. Close this page when you are done.</p>
+</main>
+</body>
+</html>
+`;
+}
+
+function openFile(file) {
+  if (process.platform !== "win32") return;
+  const child = spawn("explorer.exe", [file], { detached: true, stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref();
+}
+
 async function showSetupQr() {
   const uri = setupUri();
+  const apkUrl = apkDownloadUrl();
   const qrPath = path.join(CONFIG_DIR, "setup-qr.png");
+  const pagePath = path.join(CONFIG_DIR, "setup-qr.html");
+  const qrOptions = {
+    width: 760,
+    margin: 2,
+    color: { dark: "#000000", light: "#FFFFFF" },
+  };
   try {
     const QRCode = (await import("qrcode")).default;
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    await QRCode.toFile(qrPath, uri, {
-      width: 760,
-      margin: 2,
-      color: { dark: "#000000", light: "#FFFFFF" },
-    });
-    console.log(`\nScan this QR with the phone camera:\n  ${qrPath}`);
-    if (process.platform === "win32") {
-      spawn("mspaint.exe", [qrPath], { detached: true, stdio: "ignore" }).unref();
-    }
+    await QRCode.toFile(qrPath, uri, qrOptions);
+    const installQr = await QRCode.toDataURL(apkUrl, qrOptions);
+    const pairQr = await QRCode.toDataURL(uri, qrOptions);
+    fs.writeFileSync(pagePath, setupPageHtml(installQr, pairQr, apkUrl), "utf8");
+    console.log(`
+Set up the phone (page opened in your browser):
+  ${pagePath}
+  1. Install the app : scan the first QR, or open ${apkUrl}
+  2. Pair            : scan the second QR, then tap Connect on the phone
+  Pairing QR image   : ${qrPath}`);
+    openFile(pagePath);
   } catch {
-    console.log("\nCould not generate a QR image; enter the settings manually.");
+    console.log("\nCould not generate the setup QR codes; enter the settings manually.");
+    console.log(`  Install the app from: ${apkUrl}`);
   }
   console.log(`\nManual setup:`);
   console.log(`  Bridge URL : ${url}`);
@@ -395,7 +691,7 @@ async function installAndConfigurePhone(apk) {
       ],
       { stdio: "inherit" },
     );
-    console.log("Phone configured from the setup deep link.");
+    console.log("Pairing link opened on the phone. Tap Connect on the phone to finish.");
     return true;
   } catch (error) {
     console.error(`Could not open the setup deep link: ${error.message}`);
@@ -424,6 +720,10 @@ function installClaudeMcp() {
       `Run: claude mcp add --scope user agent-notify -- "${node}" "${mcpScript}"`,
     );
   }
+}
+
+if (releaseMode && !valueOf("--url")) {
+  await ensureTailscale();
 }
 
 const existing = readJson(CONFIG_PATH, {});
@@ -657,7 +957,7 @@ if (apply) {
 
 if (has("--serve")) {
   try {
-    const output = execFileSync("tailscale", ["serve", "--bg", "8787"], {
+    const output = execFileSync(tailscaleExe() || "tailscale", ["serve", "--bg", "8787"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -690,7 +990,7 @@ Agent Notify is ready
 config : ${CONFIG_PATH}
 bridge : ${url}${healthy ? "  (running)" : "  (NOT running)"}
 plugin : ${pluginTarget}
-phone  : ${phoneConfigured ? "installed and configured" : "scan the QR above"}
+phone  : ${phoneConfigured ? "installed; tap Connect on the phone to finish" : "follow the 2 steps on the setup page"}
 
 The bridge also starts automatically at logon.
 `);

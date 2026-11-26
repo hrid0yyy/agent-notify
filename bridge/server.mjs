@@ -447,6 +447,13 @@ function clearEscalation(entry) {
   }
 }
 
+function clearSnooze(entry) {
+  if (entry?.snoozeTimer) {
+    clearTimeout(entry.snoozeTimer);
+    entry.snoozeTimer = null;
+  }
+}
+
 function mayEscalate(entry) {
   return Boolean(
     ESCALATION.enabled &&
@@ -456,6 +463,7 @@ function mayEscalate(entry) {
       entry.lease &&
       entry.lease === activeAlarm &&
       entry.lease.leaseUntil > now() &&
+      alarmActive() &&
       (!isQuietNow() || (entry.urgent && ESCALATION.quietHours.allowUrgent)),
   );
 }
@@ -704,6 +712,7 @@ async function handle(req, res) {
       lease: null,
       alarm: null,
       escalationTimer: null,
+      snoozeTimer: null,
     };
     const answer = new Promise((resolve) => {
       let done = false;
@@ -714,6 +723,7 @@ async function handle(req, res) {
         entry.answered = true;
         clearTimeout(answerTimer);
         clearEscalation(entry);
+        clearSnooze(entry);
         if (entry.lease) {
           const reason =
             value.status === "timeout"
@@ -756,7 +766,15 @@ async function handle(req, res) {
       "x-alarm-allowed": alarmAllowed === undefined ? "" : String(alarmAllowed),
     });
     res.flushHeaders();
+    // If the asking agent goes away (e.g. the hook process was killed because
+    // the prompt was answered in the terminal), stop ringing for it.
+    res.on("close", () => {
+      if (res.writableEnded || entry.answered) return;
+      entry.resolve({ status: "cancelled", askId: id });
+      broadcast({ type: "cancelled", askId: id, reason: "client-gone" });
+    });
     const result = await answer;
+    if (res.destroyed) return;
     res.end(
       JSON.stringify({
         ...result,
@@ -792,10 +810,12 @@ async function handle(req, res) {
     entry.rings = 0;
     entry.stopped = false;
     entry.acked = false;
+    clearSnooze(entry);
     const nextAt = now() + minutes * 60_000;
     const timer = setTimeout(() => {
+      entry.snoozeTimer = null;
       const current = pending.get(askId);
-      if (!current || current.answered || current.stopped) return;
+      if (!current || current.answered || current.stopped || !alarmActive()) return;
       const alarm = requestLease(current, { returning: true });
       current.alarm = alarm;
       if (alarm.status === "granted") {
@@ -804,6 +824,7 @@ async function handle(req, res) {
       }
     }, minutes * 60_000);
     timer.unref?.();
+    entry.snoozeTimer = timer;
     broadcast({ type: "snoozed", askId, minutes });
     return json(res, 200, {
       ok: true,
@@ -855,19 +876,26 @@ async function handle(req, res) {
   return json(res, 404, { ok: false, error: "not found" });
 }
 
-const server = http.createServer((req, res) => {
+function onRequest(req, res) {
   handle(req, res).catch((error) => {
     const status = error.message === "invalid json" ? 400 : 500;
     if (!res.headersSent) json(res, status, { ok: false, error: error.message });
     else res.destroy();
   });
-});
-server.requestTimeout = 0;
-server.headersTimeout = 0;
-server.keepAliveTimeout = 65_000;
+}
 
-const wss = new WebSocketServer({ noServer: true });
-server.on("upgrade", (req, socket, head) => {
+function createHttpServer() {
+  const instance = http.createServer(onRequest);
+  instance.requestTimeout = 0;
+  instance.headersTimeout = 0;
+  instance.keepAliveTimeout = 65_000;
+  instance.on("upgrade", onUpgrade);
+  return instance;
+}
+
+// Clients only receive frames; cap what they may send.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+function onUpgrade(req, socket, head) {
   const url = new URL(req.url || "/", "http://localhost");
   if (url.pathname !== "/ws") {
     socket.destroy();
@@ -882,7 +910,9 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
-});
+}
+
+const server = createHttpServer();
 
 wss.on("connection", (ws) => {
   ws.isAlive = true;
@@ -917,10 +947,27 @@ server.listen(PORT, HOST, () => {
   console.log(`pending asks are kept in memory; max ${MAX_EVENTS} recent events`);
 });
 
+// When bound to a specific non-loopback address (the Tailscale IP), also
+// listen on loopback so local clients and `tailscale serve` (which proxies to
+// 127.0.0.1) keep working. Optional: failure here never stops the bridge.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "0.0.0.0", "::"]);
+let loopbackServer = null;
+if (!LOOPBACK_HOSTS.has(HOST)) {
+  loopbackServer = createHttpServer();
+  loopbackServer.on("error", (error) => {
+    console.warn(`loopback listener unavailable (${error.code || error.message}); continuing on ${HOST}`);
+    loopbackServer = null;
+  });
+  loopbackServer.listen(PORT, "127.0.0.1", () => {
+    console.log(`also listening on http://127.0.0.1:${PORT} for local clients`);
+  });
+}
+
 function shutdown() {
   console.log("shutting down");
   clearInterval(heartbeat);
   for (const ws of wss.clients) ws.close(1001, "server shutdown");
+  loopbackServer?.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2000).unref();
 }

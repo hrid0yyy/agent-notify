@@ -15,7 +15,9 @@ developer.
 Install Tailscale on the PC and on the phone, then sign in with the **same
 account** on both.
 
-- PC: https://tailscale.com/download/windows
+- PC: https://tailscale.com/download/windows. Setup also checks this for you:
+  if Tailscale is missing it offers to install it (with winget), and if you
+  are signed out it opens the sign-in page and waits.
 - Android: Play Store → Tailscale
 
 On the phone, open Tailscale and leave it connected. For reliable notifications,
@@ -52,23 +54,29 @@ Setup will:
 - Add Antigravity hooks and MCP server.
 - Install a hidden bridge supervisor at logon.
 - Start the bridge and check its health.
-- Install and configure the phone if ADB is available, or open a setup QR.
+- Install and configure the phone if ADB is available, or open a setup page
+  with two QR codes in your browser.
 
-Keep the setup QR private: it contains the bridge token.
+Keep the pairing QR private: it contains the bridge token.
 
 ## 4. Set up the phone
 
 ### If Setup detected the phone over ADB
 
-The APK is already installed and the app is configured. Open **Agent Notify**.
+The APK is already installed and the pairing link is open on the phone. Tap
+**Connect** in the "Pair with bridge" prompt.
 
-### If Setup showed a QR
+### If Setup opened the setup page (no ADB needed)
 
-1. Make sure the APK is installed. If not, open the `app` folder in the
-   extracted release and tap `agent-notify-<version>.apk`.
-2. Allow installs from your file manager/browser.
-3. Open the phone camera and scan the QR shown in Paint.
-4. The Agent Notify app opens with the bridge URL and token filled in.
+1. **Install the app:** scan the first QR with the phone camera. It downloads
+   `agent-notify-<version>.apk` from the GitHub release. Open it and allow
+   installs from your browser if Android asks. Skip this if the app is
+   already installed.
+2. **Pair:** scan the second QR. Agent Notify opens and asks
+   "Pair with bridge". Check the address and tap **Connect**.
+
+The page is saved at `%USERPROFILE%\.agent-notify\setup-qr.html` if you need it
+again.
 
 If the camera does not open the app, use the manual values printed by Setup,
 or read them from:
@@ -160,13 +168,16 @@ key stable.
 
 ### Setup says Tailscale was not found or is offline
 
-Install Tailscale on the PC, sign in, and run Setup again. The phone must be on
-the same tailnet.
+Setup stops before changing anything. Either install Tailscale from
+https://tailscale.com/download/windows, or run Setup again with
+`--install-tailscale` to install it with winget. Sign in, make sure the
+Tailscale app says Connected, and run Setup again. The phone must be signed in
+to the same Tailscale account.
 
 ### The phone is not detected over ADB
 
-That is fine. Install the APK manually and scan the setup QR. USB debugging or
-wireless ADB is optional.
+That is fine. Use the two QR codes on the setup page: the first installs the
+app, the second pairs it. USB debugging or wireless ADB is optional.
 
 ### The APK will not install
 
@@ -176,7 +187,8 @@ wireless ADB is optional.
 
 ### QR does not open the app
 
-Install the APK first, then scan again. If your camera app does not handle
+Install the APK first (first QR on the setup page), then scan the pairing QR
+again and tap **Connect**. If your camera app does not handle
 custom URLs, open the app and enter the URL/token manually from
 `%USERPROFILE%\.agent-notify\config.json`.
 

@@ -181,7 +181,8 @@ $Node = Join-Path $Root "runtime\node.exe"
 if (-not (Test-Path $Node)) {
     $Node = (Get-Command node -ErrorAction Stop).Source
 }
-& $Node (Join-Path $Root "scripts\setup.mjs") --release
+& $Node (Join-Path $Root "scripts\setup.mjs") --release @args
+exit $LASTEXITCODE
 '@
 Set-Content -Path (Join-Path $Bundle "setup.ps1") -Value $setupPs1 -Encoding ASCII
 
@@ -249,11 +250,14 @@ $notes = @"
 1. Download ``agent-notify-$Version-windows.zip``.
 2. Extract it anywhere.
 3. Double-click ``Setup.cmd``.
-4. Setup copies the app to ``%LOCALAPPDATA%\AgentNotify``, installs the bridge
+4. Setup checks Tailscale first (offers to install it, or opens the sign-in
+   page), copies the app to ``%LOCALAPPDATA%\AgentNotify``, installs the bridge
    and tray autostarts, configures Claude Code, OpenCode, Gemini CLI, and
-   Antigravity, starts the bridge and tray, and sets up the phone over ADB or
-   with a QR.
-5. Allow notifications, then disable battery optimization for Agent Notify and Tailscale.
+   Antigravity, and starts the bridge and tray.
+5. Phone: with ADB, Setup installs the app. Without ADB, it opens a page with
+   two QR codes: scan the first to install the app, the second to pair. Then
+   tap **Connect** on the phone.
+6. Allow notifications, then disable battery optimization for Agent Notify and Tailscale.
 
 ## Assets
 

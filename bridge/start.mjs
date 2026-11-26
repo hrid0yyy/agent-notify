@@ -6,10 +6,25 @@
  *   HOST=0.0.0.0 npm run bridge     # all interfaces (not recommended)
  */
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+// A fresh Tailscale install is not on PATH until the next logon, so also try
+// the default install folder.
+function tailscaleCommand() {
+  if (process.platform === "win32") {
+    for (const base of [process.env.ProgramFiles, process.env["ProgramFiles(x86)"]]) {
+      if (!base) continue;
+      const candidate = path.join(base, "Tailscale", "tailscale.exe");
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return "tailscale";
+}
 
 function tailscaleIpv4() {
   try {
-    const value = execFileSync("tailscale", ["ip", "-4"], {
+    const value = execFileSync(tailscaleCommand(), ["ip", "-4"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     })

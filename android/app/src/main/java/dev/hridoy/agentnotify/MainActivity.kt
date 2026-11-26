@@ -1,6 +1,7 @@
 package dev.hridoy.agentnotify
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -41,7 +42,8 @@ import org.json.JSONObject
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        applySetupIntent(intent)
+        // Only on a fresh launch: a rotation/recreate must not re-apply an old link.
+        if (savedInstanceState == null) confirmSetupIntent(intent)
         val prefs = Prefs(this)
         if (prefs.enabled && !NotifyService.running) {
             ContextCompat.startForegroundService(
@@ -58,20 +60,62 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (applySetupIntent(intent)) recreate()
+        confirmSetupIntent(intent)
     }
 
-    private fun applySetupIntent(intent: Intent?): Boolean {
-        val data = intent?.data ?: return false
-        if (data.scheme != "agentnotify" || data.host != "setup") return false
+    /**
+     * A pairing link can come from any web page or app, so never apply it
+     * silently: show where it points and save only after the user confirms.
+     */
+    private fun confirmSetupIntent(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "agentnotify" || data.host != "setup") return
         val url = data.getQueryParameter("url")?.trim().orEmpty()
         val token = data.getQueryParameter("token")?.trim().orEmpty()
-        if (url.isBlank() || token.isBlank()) return false
-        val prefs = Prefs(this)
-        prefs.baseUrl = url
-        prefs.token = token
-        prefs.enabled = true
-        return true
+        if (url.isBlank() || token.isBlank()) return
+        // Consume the link so it is not handled again.
+        setIntent(Intent(this, MainActivity::class.java))
+
+        val parsedHost: String? = try {
+            Uri.parse(if (url.contains("://")) url else "https://$url").host
+        } catch (_: Exception) {
+            null
+        }
+        val target = parsedHost?.takeIf { it.isNotBlank() } ?: url
+        val current = Prefs(this).httpBase()
+        val message = buildString {
+            append("Connect Agent Notify to this bridge?\n\n")
+            append(target)
+            if (current.isNotBlank()) {
+                append("\n\nThis replaces your current bridge:\n")
+                append(Uri.parse(current).host ?: current)
+            }
+            append("\n\nOnly continue if you started pairing from your own computer.")
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Pair with bridge")
+            .setMessage(message)
+            .setCancelable(false)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Connect") { _, _ ->
+                val prefs = Prefs(this)
+                prefs.baseUrl = url
+                prefs.token = token
+                prefs.enabled = true
+                // Starting the service again makes a running one reconnect
+                // with the new URL and token.
+                ContextCompat.startForegroundService(
+                    this,
+                    Intent(this, NotifyService::class.java),
+                )
+                recreate()
+            }
+            .show()
+            .also { dialog ->
+                // Ignore taps that pass through an overlay drawn on top.
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.filterTouchesWhenObscured = true
+            }
     }
 }
 
