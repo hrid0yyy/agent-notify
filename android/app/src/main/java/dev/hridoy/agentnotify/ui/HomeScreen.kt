@@ -65,6 +65,7 @@ fun HomeScreen(
     status: BridgeStatus?,
     events: List<AgentEvent>,
     serviceStatus: String,
+    serviceEnabled: Boolean,
     snackbarHostState: SnackbarHostState,
     onSettings: () -> Unit,
     onPresence: (String) -> Unit,
@@ -86,6 +87,7 @@ fun HomeScreen(
             Header(
                 status = status,
                 serviceStatus = serviceStatus,
+                serviceEnabled = serviceEnabled,
                 onSettings = onSettings,
             )
 
@@ -116,10 +118,12 @@ fun HomeScreen(
 private fun Header(
     status: BridgeStatus?,
     serviceStatus: String,
+    serviceEnabled: Boolean,
     onSettings: () -> Unit,
 ) {
     val live = serviceStatus.startsWith("Connected")
     val label = when {
+        !serviceEnabled -> "Background off"
         status == null -> "Offline"
         !live -> serviceStatus
         status.activeAlarm -> "Alarm ringing"
@@ -132,6 +136,7 @@ private fun Header(
         }
     }
     val dot = when {
+        !serviceEnabled -> MaterialTheme.colorScheme.onSurfaceVariant
         status == null -> AccentRed
         status.activeAlarm -> AccentRed
         !live -> AccentAmber

@@ -83,6 +83,7 @@ private fun AgentNotifyApp(prefs: Prefs) {
     var screen by rememberSaveable { mutableStateOf("home") }
     var status by remember { mutableStateOf<BridgeStatus?>(null) }
     var events by remember { mutableStateOf<List<AgentEvent>>(emptyList()) }
+    var serviceEnabled by remember { mutableStateOf(prefs.enabled) }
     var refreshKey by remember { mutableStateOf(0) }
     val serviceStatus by NotifyService.status.collectAsStateWithLifecycle()
 
@@ -120,6 +121,7 @@ private fun AgentNotifyApp(prefs: Prefs) {
         prefs.baseUrl = url
         prefs.token = token
         prefs.enabled = enabled
+        serviceEnabled = enabled
         if (enabled) {
             requireNotificationPermission()
             startService()
@@ -127,6 +129,20 @@ private fun AgentNotifyApp(prefs: Prefs) {
         } else {
             context.stopService(Intent(context, NotifyService::class.java))
             tell("Background service stopped.")
+        }
+        refreshKey += 1
+    }
+
+    fun setBackgroundService(enabled: Boolean) {
+        prefs.enabled = enabled
+        serviceEnabled = enabled
+        if (enabled) {
+            requireNotificationPermission()
+            startService()
+            tell("Background service on.")
+        } else {
+            context.stopService(Intent(context, NotifyService::class.java))
+            tell("Background service off.")
         }
         refreshKey += 1
     }
@@ -232,6 +248,7 @@ private fun AgentNotifyApp(prefs: Prefs) {
                 snackbarHostState = snackbar,
                 onBack = { screen = "home" },
                 onSave = { url, token, enabled -> saveConnection(url, token, enabled) },
+                onEnabledChange = { setBackgroundService(it) },
                 onTest = { testNotification() },
                 onBattery = { batterySettings() },
                 onFullScreen = { fullScreenSettings() },
@@ -241,6 +258,7 @@ private fun AgentNotifyApp(prefs: Prefs) {
                 status = status,
                 events = events,
                 serviceStatus = serviceStatus,
+                serviceEnabled = serviceEnabled,
                 snackbarHostState = snackbar,
                 onSettings = { screen = "settings" },
                 onPresence = { mode -> setPresence(mode) },

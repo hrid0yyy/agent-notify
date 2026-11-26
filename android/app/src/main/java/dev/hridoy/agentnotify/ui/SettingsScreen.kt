@@ -74,6 +74,7 @@ fun SettingsScreen(
     snackbarHostState: SnackbarHostState,
     onBack: () -> Unit,
     onSave: (String, String, Boolean) -> Unit,
+    onEnabledChange: (Boolean) -> Unit,
     onTest: () -> Unit,
     onBattery: () -> Unit,
     onFullScreen: () -> Unit,
@@ -251,7 +252,10 @@ fun SettingsScreen(
                     )
                     Switch(
                         checked = enabled,
-                        onCheckedChange = { enabled = it },
+                        onCheckedChange = { value ->
+                            enabled = value
+                            onEnabledChange(value)
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = MaterialTheme.colorScheme.primary,
                             checkedTrackColor = MaterialTheme.colorScheme.primaryContainer,
