@@ -21,7 +21,15 @@ function tailscaleIpv4() {
   }
 }
 
-const host = process.env.HOST || process.env.AGENT_NOTIFY_HOST || tailscaleIpv4() || "127.0.0.1";
+const explicitHost = process.env.HOST || process.env.AGENT_NOTIFY_HOST;
+const host = explicitHost || tailscaleIpv4();
+if (!host) {
+  console.error(
+    "Agent Notify: Tailscale is not running or has no IPv4 address. " +
+      "Refusing to bind to loopback; the supervisor will retry.",
+  );
+  process.exit(1);
+}
 process.env.HOST = host;
 const port = process.env.PORT || process.env.AGENT_NOTIFY_PORT || "8787";
 console.log(`Agent Notify bridge will bind to ${host}:${port}`);
