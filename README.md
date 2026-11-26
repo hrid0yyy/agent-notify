@@ -308,7 +308,7 @@ Artifacts land in `publish/`:
 - `SHA256SUMS.txt`
 - `release-notes.md`
 
-See [RELEASE.md](RELEASE.md) for signing, keystore backup, private-repo setup,
+See [RELEASE.md](RELEASE.md) for signing, keystore backup, repository setup,
 and the release checklist.
 
 ## Troubleshooting
