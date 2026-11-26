@@ -25,6 +25,8 @@ object Notifications {
     fun agentLabel(agent: String): String = when (agent) {
         "claude-code" -> "Claude Code"
         "opencode" -> "OpenCode"
+        "gemini-cli" -> "Gemini CLI"
+        "antigravity" -> "Antigravity"
         "mcp" -> "MCP"
         "test" -> "Test"
         else -> agent.replace('-', ' ')
@@ -35,6 +37,8 @@ object Notifications {
     fun agentColor(agent: String): Int = when (agent) {
         "claude-code" -> 0xFFD97757.toInt()
         "opencode" -> 0xFF7CE38B.toInt()
+        "gemini-cli" -> 0xFF8AB4F8.toInt()
+        "antigravity" -> 0xFF7FD1C8.toInt()
         "mcp" -> 0xFF8AB4F8.toInt()
         else -> 0xFF7CE38B.toInt()
     }

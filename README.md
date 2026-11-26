@@ -3,21 +3,23 @@
 Phone notifications, remote approvals, and urgent alarms for coding agents,
 over your own Tailscale network.
 
-Claude Code and OpenCode can reach you when they finish, fail, need a
-permission, or need a decision. Approvals can be answered from the lock screen;
-if you ignore an urgent request, the phone can ring and show a full-screen
-alarm.
+Claude Code, OpenCode, Gemini CLI, and Antigravity (`agy`) can reach you when
+they finish, fail, need a permission, or need a decision. Approvals can be
+answered from the lock screen; if you ignore an urgent request, the phone can
+ring and show a full-screen alarm.
 
 ```
-Claude Code hooks ─┐
-OpenCode plugin  ──┼──▶ bridge (HTTP + WebSocket) ──▶ Android app
-MCP notify/ask   ──┘          │
-                              └──▶ pending answers ──▶ hook/plugin/MCP call
+Claude Code hooks     ─┐
+OpenCode plugin       ─┤
+Gemini / Antigravity  ─┼──▶ bridge (HTTP + WebSocket) ──▶ Android app
+MCP notify/ask        ─┘          │
+                                  └──▶ pending answers ──▶ hook/plugin/MCP call
 ```
 
 ## Features
 
-- **Task finished / failed notifications** from Claude Code and OpenCode.
+- **Task finished / failed notifications** from Claude Code, OpenCode, Gemini
+  CLI, and Antigravity.
 - **Permission approvals** with Allow / Deny from the notification shade.
 - **Free-text answers** for open-ended agent questions.
 - **Presence control:** **At desk** mutes the phone completely; **Away**
@@ -48,8 +50,8 @@ MCP notify/ask   ──┘          │
 
 ## Quick start (release bundle)
 
-1. Download `agent-notify-<version>-windows.zip` from the private GitHub
-   Releases page.
+1. Download `agent-notify-<version>-windows.zip` from the
+   [latest release](https://github.com/hrid0yyy/agent-notify/releases/latest).
 2. Extract it anywhere.
 3. Double-click **`Setup.cmd`**.
 4. Scan the setup QR with the phone camera, or let the installer configure the
@@ -58,6 +60,33 @@ MCP notify/ask   ──┘          │
    Tailscale.
 
 See [SETUP.md](SETUP.md) for the full end-user guide.
+
+## Set it up with an agent
+
+Copy this prompt into Claude Code, OpenCode, Gemini CLI, Antigravity (`agy`),
+Codex, or any agent with PowerShell access on your Windows machine:
+
+> Set up Agent Notify on this Windows machine.
+>
+> 1. Download the newest `agent-notify-*-windows.zip` from
+>    https://github.com/hrid0yyy/agent-notify/releases/latest and extract it to
+>    a temporary folder.
+> 2. Run
+>    `powershell.exe -NoProfile -ExecutionPolicy Bypass -File setup.ps1`
+>    from the extracted folder. Do not use `Setup.cmd`; it pauses on errors.
+> 3. If an Android phone is connected over ADB, let Setup install and configure
+>    the APK. Otherwise, show me the setup QR and wait for me to scan it.
+> 4. Verify the bridge health URL that Setup prints, and confirm that the
+>    bridge and tray are running.
+> 5. Tell me the bridge URL, which agent integrations were installed, and
+>    anything that still needs my input.
+>
+> Do not print the token or the QR contents in chat. Do not remove existing
+> agent settings; only add the `agent-notify` entries. Keep the generated
+> config and backups in place.
+
+The agent handles the download, install, agent config files, bridge health, and
+phone handoff. You still scan the QR or approve the Android install if needed.
 
 ## What Setup does
 
@@ -68,6 +97,8 @@ See [SETUP.md](SETUP.md) for the full end-user guide.
 - Writes `~/.agent-notify/config.json` with a new token.
 - Installs the OpenCode plugin and MCP server.
 - Merges Claude Code hooks and installs its MCP server.
+- Adds the Gemini CLI MCP server and its `AfterAgent` / `Notification` hooks.
+- Adds the Antigravity MCP server and its `Stop` hook.
 - Installs a hidden bridge supervisor and the Windows tray at logon.
 - Starts the bridge and tray, then verifies the bridge health.
 - Installs the APK and sends the setup deep link when a phone is connected;
@@ -106,8 +137,8 @@ Use the phone app or the Windows tray. Agents cannot change presence or alarm
 mode.
 
 Agents are instructed not to use Agent Notify on their own; only when the user
-asks. Hooks (`Stop`, `Notification`, `PermissionRequest`, OpenCode execution
-events) simply follow **Away / At desk**.
+asks. Hooks (`Stop`, `Notification`, `PermissionRequest`, Gemini `AfterAgent`,
+Antigravity `Stop`, OpenCode execution events) simply follow **Away / At desk**.
 
 ## Phone app
 
@@ -141,6 +172,26 @@ The global plugin reports:
 - `session.execution.failed` → error
 - `permission.asked` → Allow / Deny
 - `permission.replied` → cancels the phone prompt if answered on desktop
+
+### Gemini CLI
+
+Setup adds the MCP server and two hooks to `~/.gemini/settings.json`:
+
+- `AfterAgent` → finished
+- `Notification` → permission prompts and other Gemini alerts
+
+Gemini permission notifications are informational; answer them in the terminal.
+Use the `ask_user` MCP tool when you want an answer from the phone.
+
+### Antigravity
+
+Setup adds the MCP server to `~/.gemini/config/mcp_config.json` and a `Stop`
+hook to `~/.gemini/config/hooks.json` (and the CLI hooks file when present):
+
+- `Stop` → finished, paused with background work, or stopped with an error
+
+Antigravity hooks are observational. Use the `ask_user` MCP tool for questions
+that need a phone answer.
 
 ### MCP
 
@@ -247,7 +298,7 @@ C:\Users\USER\.local\gradle-8.14.8\bin\gradle.bat assembleDebug
 # builds and stores 1.1.0
 
 .\Build-Release.ps1 -Version 1.1.0 -Publish
-# builds and creates a draft private GitHub release
+# builds and creates a draft GitHub release
 ```
 
 Artifacts land in `publish/`:

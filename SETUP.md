@@ -1,15 +1,14 @@
 # Agent Notify — Setup
 
 This guide is for the person installing Agent Notify. You do not need to be a
-developer, but you do need access to the private GitHub repository that hosts
-the release.
+developer.
 
 ## What you need
 
 - A Windows 10 or Windows 11 PC.
 - An Android phone (Android 8 or newer).
 - A Tailscale account.
-- Access to the private `agent-notify` GitHub repo.
+- The release from GitHub.
 
 ## 1. Install Tailscale on both devices
 
@@ -24,7 +23,7 @@ enable **Always-on VPN** in Android's VPN settings.
 
 ## 2. Download the release
 
-1. Open the private `agent-notify` GitHub repository.
+1. Open https://github.com/hrid0yyy/agent-notify.
 2. Open **Releases**.
 3. Download `agent-notify-<version>-windows.zip`.
 4. Extract it anywhere temporary, for example:
@@ -49,6 +48,8 @@ Setup will:
 - Create a private token and `~/.agent-notify/config.json`.
 - Install the OpenCode plugin and MCP server.
 - Merge Claude Code hooks and install its MCP server.
+- Add Gemini CLI hooks and MCP server.
+- Add Antigravity hooks and MCP server.
 - Install a hidden bridge supervisor at logon.
 - Start the bridge and check its health.
 - Install and configure the phone if ADB is available, or open a setup QR.
@@ -129,6 +130,9 @@ screen, and ring. Use **Stop alarming** when finished.
 | OpenCode plugin | `%USERPROFILE%\.config\opencode\plugins\agent-notify.js` |
 | OpenCode config | `%USERPROFILE%\.config\opencode\opencode.json` |
 | Claude Code hooks | `%USERPROFILE%\.claude\settings.json` |
+| Gemini CLI config | `%USERPROFILE%\.gemini\settings.json` |
+| Antigravity MCP | `%USERPROFILE%\.gemini\config\mcp_config.json` |
+| Antigravity hooks | `%USERPROFILE%\.gemini\config\hooks.json` and `%USERPROFILE%\.gemini\antigravity-cli\hooks.json` |
 | Bridge autostart | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AgentNotifyBridge.vbs` |
 | Tray autostart | `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AgentNotifyTray.vbs` |
 | Android app | package `dev.hridoy.agentnotify` |
@@ -137,7 +141,7 @@ screen, and ring. Use **Stop alarming** when finished.
 
 1. Download the newer zip from Releases.
 2. Extract it anywhere.
-3. Close Claude Code / OpenCode if Setup reports locked files.
+3. Close any coding agent if Setup reports locked files.
 4. Run **`Setup.cmd`** again.
 5. The existing token and app configuration are preserved.
 
@@ -149,8 +153,8 @@ key stable.
 1. Run **`Uninstall.cmd`** to remove autostart and stop the bridge.
 2. Uninstall **Agent Notify** from Android.
 3. Optional: delete `%USERPROFILE%\.agent-notify`.
-4. Optional: remove the Agent Notify entries from Claude Code and OpenCode
-   config files. Setup made timestamped backups next to them.
+4. Optional: remove the Agent Notify entries from Claude Code, OpenCode,
+   Gemini CLI, and Antigravity config files. Setup made timestamped backups.
 
 ## Troubleshooting
 

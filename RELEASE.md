@@ -8,7 +8,7 @@ Maintainer notes for building and publishing the private release.
 - Node.js 22+ (24 recommended)
 - JDK 21
 - Android SDK with platform 36 and build-tools
-- `gh` authenticated to the private repo
+- `gh` authenticated to the repo
 - Tailscale installed and online for the self-tests
 
 The build script auto-detects:

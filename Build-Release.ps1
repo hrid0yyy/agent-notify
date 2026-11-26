@@ -250,8 +250,9 @@ $notes = @"
 2. Extract it anywhere.
 3. Double-click ``Setup.cmd``.
 4. Setup copies the app to ``%LOCALAPPDATA%\AgentNotify``, installs the bridge
-   and tray autostarts, configures Claude Code / OpenCode, starts the bridge and
-   tray, and sets up the phone over ADB or with a QR.
+   and tray autostarts, configures Claude Code, OpenCode, Gemini CLI, and
+   Antigravity, starts the bridge and tray, and sets up the phone over ADB or
+   with a QR.
 5. Allow notifications, then disable battery optimization for Agent Notify and Tailscale.
 
 ## Assets

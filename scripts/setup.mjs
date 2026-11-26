@@ -18,6 +18,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import {
+  installAntigravityIntegration,
+  installGeminiIntegration,
+} from "../lib/integrations.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_ROOT = ROOT;
@@ -99,9 +103,8 @@ function commandExists(command) {
   }
 }
 
-function installAutostart() {
-  if (process.platform !== "win32") return;
-  const startup = path.join(
+function windowsStartupDir() {
+  return path.join(
     process.env.APPDATA ||
       path.join(os.homedir(), "AppData", "Roaming"),
     "Microsoft",
@@ -110,6 +113,29 @@ function installAutostart() {
     "Programs",
     "Startup",
   );
+}
+
+function bridgeSupervisorRunning() {
+  if (process.platform !== "win32") return false;
+  try {
+    const output = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        "if (Get-CimInstance Win32_Process -Filter \"Name='wscript.exe'\" | Where-Object { $_.CommandLine -like '*AgentNotifyBridge.vbs*' }) { 'yes' } else { 'no' }",
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    return output === "yes";
+  } catch {
+    return false;
+  }
+}
+
+function installAutostart() {
+  if (process.platform !== "win32") return;
+  const startup = windowsStartupDir();
   fs.mkdirSync(startup, { recursive: true });
   const vbsPath = path.join(startup, "AgentNotifyBridge.vbs");
   const installedNode = path.join(APP_ROOT, "runtime", "node.exe");
@@ -213,6 +239,34 @@ async function ensureBridge() {
     console.log(`Bridge already running: ${url}`);
     return true;
   }
+
+  if (process.platform === "win32") {
+    const supervisor = path.join(windowsStartupDir(), "AgentNotifyBridge.vbs");
+    if (fs.existsSync(supervisor)) {
+      if (bridgeSupervisorRunning()) {
+        console.log("Bridge supervisor is already running.");
+      } else {
+        spawn("wscript.exe", [supervisor], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        }).unref();
+        console.log("Bridge supervisor started.");
+      }
+      for (let i = 0; i < 40; i += 1) {
+        await sleep(500);
+        if (await isHealthy()) {
+          console.log(`Bridge started: ${url}`);
+          return true;
+        }
+      }
+      console.error(
+        `Bridge did not become healthy at ${url}. The supervisor will keep retrying; check Tailscale.`,
+      );
+      return false;
+    }
+  }
+
   const installedNode = path.join(APP_ROOT, "runtime", "node.exe");
   const child = spawn(
     fs.existsSync(installedNode) ? installedNode : process.execPath,
@@ -484,7 +538,7 @@ if (releaseMode && process.platform === "win32") {
         `Could not install application files to ${target}: ${error.message}`,
       );
       console.error(
-        "Close Agent Notify and any Claude Code / OpenCode sessions, then run setup again.",
+        "Close Agent Notify and any coding agent sessions, then run setup again.",
       );
       process.exit(1);
     }
@@ -508,6 +562,8 @@ fs.copyFileSync(pluginSource, pluginTarget);
 const installedNode = path.join(APP_ROOT, "runtime", "node.exe");
 const node = fs.existsSync(installedNode) ? installedNode : process.execPath;
 const hookScript = path.join(APP_ROOT, "hooks", "claude-hook.mjs");
+const geminiHookScript = path.join(APP_ROOT, "hooks", "gemini-hook.mjs");
+const antigravityHookScript = path.join(APP_ROOT, "hooks", "antigravity-hook.mjs");
 const mcpScript = path.join(APP_ROOT, "mcp", "server.mjs");
 
 function claudeHooks() {
@@ -572,6 +628,31 @@ if (apply) {
     writeJson(opencodePath, opencode);
     console.log(`OpenCode MCP server installed: ${opencodePath}`);
   }
+
+  const gemini = installGeminiIntegration({
+    node,
+    mcpScript,
+    hookScript: geminiHookScript,
+  });
+  if (gemini.installed) {
+    console.log(`Gemini CLI integration installed: ${gemini.path}`);
+  } else if (gemini.reason && !/not detected/i.test(gemini.reason)) {
+    console.error(`Gemini CLI integration failed: ${gemini.reason}`);
+  }
+
+  const antigravity = installAntigravityIntegration({
+    node,
+    mcpScript,
+    hookScript: antigravityHookScript,
+  });
+  if (antigravity.installed) {
+    console.log(`Antigravity integration installed: ${antigravity.path}`);
+    for (const hookPath of antigravity.hooks || []) {
+      console.log(`Antigravity hooks: ${hookPath}`);
+    }
+  } else if (antigravity.reason && !/not detected/i.test(antigravity.reason)) {
+    console.error(`Antigravity integration failed: ${antigravity.reason}`);
+  }
 }
 
 if (has("--serve")) {
@@ -633,6 +714,12 @@ Then in the Android app, use:
 
 Claude Code MCP:
   claude mcp add --scope user agent-notify -- "${node}" "${mcpScript}"
+
+Gemini CLI MCP:
+  ${path.join(os.homedir(), ".gemini", "settings.json")}  (mcpServers.agent-notify)
+
+Antigravity MCP:
+  ${path.join(os.homedir(), ".gemini", "config", "mcp_config.json")}  (mcpServers.agent-notify)
 
 Useful:
   npm run test:event              # one test notification

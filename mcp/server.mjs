@@ -4,7 +4,8 @@
  *   notify_user - fire-and-forget update on the phone
  *   ask_user    - blocking question with buttons / free-text reply
  *
- * Works with Claude Code, OpenCode, and any other MCP client.
+ * Works with Claude Code, OpenCode, Gemini CLI, Antigravity, and any other
+ * MCP client.
  */
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -17,6 +18,14 @@ const BASE = baseUrl(config);
 const TIMEOUT_MS = 15_000;
 
 function detectAgent() {
+  if (process.env.ANTIGRAVITY || process.env.ANTIGRAVITY_CLI) return "antigravity";
+  if (
+    process.env.GEMINI_CLI ||
+    process.env.GEMINI_SESSION_ID ||
+    process.env.GEMINI_PROJECT_DIR
+  ) {
+    return "gemini-cli";
+  }
   if (process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT) return "claude-code";
   if (process.env.OPENCODE || process.env.OPENCODE_SERVER) return "opencode";
   return "mcp";
@@ -24,7 +33,12 @@ function detectAgent() {
 
 function projectName(explicit) {
   if (explicit) return explicit;
-  const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const cwd =
+    process.env.CLAUDE_PROJECT_DIR ||
+    process.env.GEMINI_PROJECT_DIR ||
+    process.env.GEMINI_CWD ||
+    process.env.ANTIGRAVITY_PROJECT_DIR ||
+    process.cwd();
   return path.basename(cwd) || "project";
 }
 
